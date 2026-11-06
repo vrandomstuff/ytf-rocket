@@ -1,0 +1,10 @@
+[package]
+name = "ytf-rocket"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+innertube-rs = "0.10.1"
+rocket = "0.5.2"
+tokio = "1.54.1"
+moka = { version = "0.12.16", features = ["future"] }
