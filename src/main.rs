@@ -28,7 +28,6 @@ use rocket::http::Status;
 
 // Global Innertube client container
 static innertubeCache: OnceCell<Innertube> = OnceCell::const_new();
-
 // In-memory cache for search results (expires after 1 hour, max 5000 entries).
 // Stores the flattened `Video` shape so a cache hit can be serialized directly.
 type SearchCache = Cache<(String, u8), Vec<Video>>;
@@ -100,7 +99,7 @@ async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelC
 // Flattens one innertube search hit into the `Video` shape the API/frontend will
 // return. `SearchResultItem` is an enum (video/channel/playlist), so callers match
 // on `SearchResultItem::Video` and pass the inner `SearchVideoItem` in here.
-fn searchVideoItemToVideo(item: &SearchVideoItem) -> Video {
+async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: ChannelCache) -> Video {
 	// YouTube lists thumbnails smallest-to-largest, but pick the largest explicitly
 	// so the order of `thumbnails` can't silently degrade the image quality.
 	let thumbnail = item
@@ -110,10 +109,6 @@ fn searchVideoItemToVideo(item: &SearchVideoItem) -> Video {
 		.map(|thumb| thumb.url.clone())
 		.unwrap_or_default();
 
-	// Search results only expose the channel id/name, not its avatar, so leave the
-	// avatar blank rather than inventing a URL. A channel lookup can fill it later.
-	let channelAvatar = String::new();
-
 	// `channel_id` can be empty for odd result types, so avoid emitting a bare URL.
 	let channel = if item.channel_id.is_empty() {
 		String::new()
@@ -121,11 +116,13 @@ fn searchVideoItemToVideo(item: &SearchVideoItem) -> Video {
 		item.channel_id.clone()
 	};
 
+	let channelMetadata = getChannelMetadata(channel.clone(), cache).await;
+
 	return Video {
 		id: item.video_id.clone(),
-		thumbnail,
-		channel,
-		channelAvatar,
+		thumbnail: thumbnail,
+		channel: channel,
+		channelAvatar: channelMetadata.avatar.expect("failed to get avatar"),
 		channelName: item.author.clone(),
 		title: item.title.clone()
 	};
@@ -136,7 +133,8 @@ fn searchVideoItemToVideo(item: &SearchVideoItem) -> Video {
 async fn apiSearch(
 	q: String,
 	page: u8,
-	cache: &rocket::State<SearchCache>
+	cache: &rocket::State<SearchCache>,
+	channelCache: &rocket::State<ChannelCache>
 ) -> Result<String, String> {
 	let totalStart = Instant::now();
 
@@ -166,14 +164,14 @@ async fn apiSearch(
 
 	// The cache stores `Video`s, so channels/playlists are dropped here. Taking a
 	// slice keeps `resultPage` intact, since we still need its continuation token.
-	let toVideos = |items: &[SearchResultItem]| -> Vec<Video> {
-		items
-			.iter()
-			.filter_map(|item| match item {
-				SearchResultItem::Video(video) => Some(searchVideoItemToVideo(video)),
-				_ => None
-			})
-			.collect()
+	let toVideos = async |items: &[SearchResultItem]| -> Vec<Video> {
+		let mut videos = Vec::new();
+		for item in items {
+			if let SearchResultItem::Video(video) = item {
+				videos.push(searchVideoItemToVideo(video, (**channelCache).clone()).await);
+			}
+		}
+		videos
 	};
 
 	// Navigate to requested page
@@ -184,13 +182,13 @@ async fn apiSearch(
 				.search(&q, Some(token))
 				.await
 				.map_err(|e| e.to_string())?;
-			cache.insert(walkingCacheKey, toVideos(&resultPage.items)).await;
+			cache.insert(walkingCacheKey, toVideos(&resultPage.items).await).await;
 		} else {
 			break;
 		}
 	}
 
-	let videos = toVideos(&resultPage.items);
+	let videos = toVideos(&resultPage.items).await;
 	cache.insert(cacheKey, videos.clone()).await;
 
 	eprintln!(
