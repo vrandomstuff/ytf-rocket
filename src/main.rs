@@ -30,7 +30,7 @@ use rocket::http::Status;
 static innertubeCache: OnceCell<Innertube> = OnceCell::const_new();
 // In-memory cache for search results (expires after 1 hour, max 5000 entries).
 // Stores the flattened `Video` shape so a cache hit can be serialized directly.
-type SearchCache = Cache<(String, u8), Vec<Video>>;
+type SearchCache = Cache<(String, u64), Vec<Video>>;
 
 pub async fn innertube() -> Result<&'static Innertube, String> {
 	innertubeCache
@@ -71,13 +71,20 @@ struct Channel {
 // TTL: 1 day Max: 5000
 type ChannelCache = Cache<String, Channel>;
 
-async fn getChannelMetadata(channelId: String, cache: ChannelCache) -> Channel {
-	if let Some(cachedResults) = cache.get(&channelId).await {
-		return cachedResults
-	}
-	let yt = innertube().await;
+// innertube resolves unknown channels to this placeholder avatar, so reuse it
+// instead of emitting an empty string (it is a stable permalink).
+const defaultAvatar: &str = "https://yt3.googleusercontent.com/a/default-user=s100-c-k-c0x00ffffff-no-rj";
 
-	let about = yt.expect("Innertube returned a error").get_channel_about(&channelId).await.map_err(|e| e.to_string()).unwrap();
+async fn getChannelMetadata(channelId: String, cache: ChannelCache) -> Result<Channel, String> {
+	if let Some(cachedResults) = cache.get(&channelId).await {
+		return Ok(cachedResults)
+	}
+	let yt = innertube().await?;
+
+	let about = yt
+		.get_channel_about(&channelId)
+		.await
+		.map_err(|e| e.to_string())?;
 
 	let channel = Channel {
 		id: about.channel_id,
@@ -88,12 +95,18 @@ async fn getChannelMetadata(channelId: String, cache: ChannelCache) -> Channel {
 	};
 	cache.insert(channelId, channel.clone()).await;
 
-	return channel
+	return Ok(channel)
 }
 
 #[get("/channelMetadata?<channelId>")]
-async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelCache>) -> String {
-	return serde_json::to_string(&getChannelMetadata(channelId.to_string(), (**cache).clone()).await).map_err(|e| e.to_string()).expect("this expect seems to be unreachable but rustc wants it");
+async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelCache>) -> Result<String, (Status, String)> {
+	// Upstream/YouTube failures are reported as 503 instead of panicking; only a
+	// serialization bug can produce a 500.
+	let channel = getChannelMetadata(channelId, (**cache).clone())
+		.await
+		.map_err(|e| (Status::ServiceUnavailable, e))?;
+	return serde_json::to_string(&channel)
+		.map_err(|e| (Status::InternalServerError, e.to_string()))
 }
 
 // Flattens one innertube search hit into the `Video` shape the API/frontend will
@@ -105,7 +118,7 @@ async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: ChannelCache) -> 
 	let thumbnail = item
 		.thumbnails
 		.iter()
-		.max_by_key(|thumb| thumb.width * thumb.height)
+		.max_by_key(|thumb| thumb.width.saturating_mul(thumb.height))
 		.map(|thumb| thumb.url.clone())
 		.unwrap_or_default();
 
@@ -116,13 +129,26 @@ async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: ChannelCache) -> 
 		item.channel_id.clone()
 	};
 
-	let channelMetadata = getChannelMetadata(channel.clone(), cache).await;
+	// The avatar is cosmetic, so a failed lookup (or a channel without one) falls
+	// back to the placeholder innertube itself returns for unknown channels rather
+	// than failing the whole search page.
+	let channelAvatar = if channel.is_empty() {
+		defaultAvatar.to_string()
+	} else {
+		match getChannelMetadata(channel.clone(), cache).await {
+			Ok(metadata) => metadata.avatar.unwrap_or_else(|| defaultAvatar.to_string()),
+			Err(e) => {
+				eprintln!("[PROFILE] channel metadata lookup failed for '{}': {}", channel, e);
+				defaultAvatar.to_string()
+			}
+		}
+	};
 
 	return Video {
 		id: item.video_id.clone(),
 		thumbnail: thumbnail,
 		channel: channel,
-		channelAvatar: channelMetadata.avatar.expect("failed to get avatar"),
+		channelAvatar: channelAvatar,
 		channelName: item.author.clone(),
 		title: item.title.clone()
 	};
@@ -132,13 +158,19 @@ async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: ChannelCache) -> 
 #[get("/search?<q>&<page>")]
 async fn apiSearch(
 	q: String,
-	page: u8,
+	page: u64,
 	cache: &rocket::State<SearchCache>,
 	channelCache: &rocket::State<ChannelCache>
-) -> Result<String, String> {
+) -> Result<String, (Status, String)> {
+	// Pages are 1-based; reject anything past 256 instead of walking an
+	// unbounded number of upstream continuation requests.
+	if page > 256 {
+		return Err((Status::BadRequest, format!("page must be 1-256, got {}", page)));
+	}
+
 	let totalStart = Instant::now();
 
-	let yt = innertube().await?;
+	let yt = innertube().await.map_err(|e| (Status::ServiceUnavailable, e))?;
 
 	// Cache key includes both query and page
 	let cacheKey = (q.clone(), page);
@@ -152,7 +184,8 @@ async fn apiSearch(
 			totalStart.elapsed()
 		);
 
-		return serde_json::to_string(&cachedResults).map_err(|e| e.to_string())
+		return serde_json::to_string(&cachedResults)
+			.map_err(|e| (Status::InternalServerError, e.to_string()))
 	}
 
 	let searchStart = Instant::now();
@@ -160,7 +193,7 @@ async fn apiSearch(
 	let mut resultPage = yt
 		.search(&q, None)
 		.await
-		.map_err(|e| e.to_string())?;
+		.map_err(|e| (Status::ServiceUnavailable, e.to_string()))?;
 
 	// The cache stores `Video`s, so channels/playlists are dropped here. Taking a
 	// slice keeps `resultPage` intact, since we still need its continuation token.
@@ -181,7 +214,7 @@ async fn apiSearch(
 			resultPage = yt
 				.search(&q, Some(token))
 				.await
-				.map_err(|e| e.to_string())?;
+				.map_err(|e| (Status::ServiceUnavailable, e.to_string()))?;
 			cache.insert(walkingCacheKey, toVideos(&resultPage.items).await).await;
 		} else {
 			break;
@@ -201,14 +234,15 @@ async fn apiSearch(
 		totalStart.elapsed()
 	);
 
-	return serde_json::to_string(&videos).map_err(|e| e.to_string())
+	return serde_json::to_string(&videos)
+		.map_err(|e| (Status::InternalServerError, e.to_string()))
 }
 #[get("/")]
 fn apiIndex() -> &'static str {
 	"
 /api/m3u8/<video> - Get m3u8 master playlist for a video.
 /api/m3u8/<video>/proxy/<token> - HLS segment CORS proxy.
-/api/search?q=<search query>&page=(page) - Get array of videos for a search query.
+/api/search?q=<search query>&page=(page 1-256) - Get array of videos for a search query.
 /api/channelMetadata?channelId=<channel id> - Get channel metadata for channelId
 
 Structs that are given in responses:
