@@ -20,6 +20,13 @@ TODO: (in order of most importent to least importent)
 
 mod wrappers;
 
+// `build.rs` generates this file in OUT_DIR from `web/dist/`. It contains one
+// `#[get]` handler per frontend file plus `fileRoutes()`, which returns all of
+// them as a `Vec<rocket::Route>` so they can be mounted in one call.
+mod webAssets {
+	include!(concat!(env!("OUT_DIR"), "/webAssets.rs"));
+}
+
 use wrappers::{Video, Channel, getChannelMetadata, ytSearch};
 use innertube_rs::Innertube;
 use tokio::sync::OnceCell;
@@ -45,12 +52,6 @@ pub async fn innertube() -> Result<&'static Innertube, String> {
 		})
 		.await
 }
-// Web frontend (soon)
-#[get("/")]
-fn index() -> &'static str {
-	"Hello, world!"
-}
-
 // TTL: 1 day Max: 5000
 type ChannelCache = Cache<String, Channel>;
 
@@ -159,6 +160,7 @@ fn rocket() -> _ {
 			eprintln!("[STARTUP] Innertube pre-warmed in {:?}", start.elapsed());
 			rocket
 		})))
-		.mount("/", routes![index, health])
+		.mount("/", webAssets::fileRoutes())
+		.mount("/", routes![health])
 		.mount("/api", routes![apiIndex, apiSearch, apiGetChannelMetadata])
 }

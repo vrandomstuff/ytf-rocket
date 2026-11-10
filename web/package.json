@@ -1,0 +1,26 @@
+{
+	"name": "web",
+	"version": "1.0.0",
+	"description": "",
+	"main": "index.js",
+	"scripts": {
+		"build": "tsc && cp -r src/**/*.html dist/"
+	},
+	"keywords": [],
+	"author": "",
+	"license": "AGPL-3.0",
+	"devEngines": {
+		"packageManager": {
+			"name": "pnpm",
+			"version": "11.22.0",
+			"onFail": "download"
+		}
+	},
+	"type": "module",
+	"devDependencies": {
+		"typescript": "^7.0.2"
+	},
+	"dependencies": {
+		"hls.js": "^1.7.4"
+	}
+}
