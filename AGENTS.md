@@ -7,13 +7,13 @@ Single-binary Rust service (edition 2024): a Rocket 0.5 HTTP API wrapping YouTub
 - `cargo check` — primary verification and the only real gate.
 - `cargo test` — compiles the crate; there is no test module anywhere.
 - `cargo run` — serves on Rocket's default `127.0.0.1:8000`. Ignition pre-warms the Innertube client, so it needs live network access; nothing is mocked or fixture-based, and manual `curl` checks hit real YouTube.
-- `build.rs` scans `web/dist/` and writes `$OUT_DIR/webAssets.rs`. Rebuild the frontend (`pnpm build` in `web/`) and then run any cargo command to pick up changes; Cargo reruns the script automatically when `web/dist/` changes.
+- `build.rs` scans `web/dist/` and writes `$OUT_DIR/webAssets.rs`. Rebuild the frontend (`pnpm build` in `web/`) and then run any cargo command to pick up changes; Cargo reruns the script automatically when `web/dist/`, `web/package.json`, or `web/pnpm-lock.yaml` changes.
 - Do **not** run `cargo fmt` / `rustfmt`: there is no rustfmt config, and its default would rewrite the required tab indentation to spaces.
 - Ignore `*~`, `Cargo.toml~`, `.gitignore~`, `#*#`, and `#README.md#` — Emacs backups/locks, not source. `#README.md#` is an autosave of a README that is not in the tree.
 
 ## Layout
 
-- `build.rs` — scans `web/dist/` at compile time and generates `$OUT_DIR/webAssets.rs` (one embedded `#[get]` handler per file plus `fileRoutes()`).
+- `build.rs` — regenerates the frontend license page into `web/dist/`, then scans `web/dist/` at compile time and generates `$OUT_DIR/webAssets.rs` (one embedded `#[get]` handler per file plus `fileRoutes()`). License generation is best-effort: missing/failed `pnpm` emits a `cargo:warning` and keeps existing output.
 - `src/main.rs` — routes/handlers, cache construction and `.manage(...)`, the global `Innertube` cell, the warmup fairing, the `/api` index text, and the `webAssets` module that `include!`s the generated file.
 - `src/wrappers.rs` — `Video`/`Channel` serde structs, `ytSearch`, `getChannelMetadata`, `searchVideoItemToVideo`. Put innertube calls and result flattening here; keep handlers in `main.rs`. It reaches the cache aliases and client through `crate::` (`mod wrappers;` is declared in `main.rs`).
 - The struct definitions are duplicated in the `/api` index text; update both when a field changes.
@@ -30,6 +30,7 @@ Single-binary Rust service (edition 2024): a Rocket 0.5 HTTP API wrapping YouTub
 ## Architecture
 
 - `build.rs` embeds every regular file under `web/dist/` with `include_bytes!`: `index.html` maps to `/`, every other file keeps its relative path, and `fileRoutes()` returns all generated routes as a `Vec<Route>` for `.mount("/", ...)`. Unknown extensions fall back to `application/octet-stream`. Generated asset routes are rejected at build time if they collide with `/health` or `/api/...`; a missing `web/dist` only emits a `cargo:warning` and serves no frontend assets.
+- When `web/dist` exists, `build.rs` first runs a Rust port of safe-yt-viewer's `generate_licenses.py`: `pnpm licenses ls --json` in `web/`, copied license texts, and `web/dist/licenses.html` / `web/dist/licenses/LICENSE.*.txt`. `LICENSE_URL_OVERRIDES` and `EXTRA_PACKAGES` are intentionally empty but retained for future entries. Generated files are embedded on the same pass. pnpm/download/write failures warn (`cargo:warning`) and keep existing output rather than failing the build; files are only rewritten when their content changes to avoid Cargo rebuild loops.
 - `innertube()` lazily creates one process-global `Innertube` in a `tokio::sync::OnceCell`; an `AdHoc::on_ignite` fairing pre-warms it at startup. Reuse this accessor; never construct `Innertube::new()` per request.
 - `searchCache` is a `moka::future::Cache<(String, u64), Vec<Video>>`: 1-hour TTL, max 5000 entries, keyed by `(query, 1-based page)`. Walking to a deeper page also inserts the intermediate pages it passes.
 - `channelCache` is a separate `Cache<String, Channel>`: 24-hour TTL, max 5000 entries. It is filled lazily by `getChannelMetadata` (which calls `get_channel_about`) — both by `/api/channelMetadata` and by the per-video avatar lookups during search, so results and metadata share entries.
