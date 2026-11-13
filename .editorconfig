@@ -1,0 +1,18 @@
+# https://editorconfig.org
+root = true
+
+# Default for the whole repo: hard tabs, 4 columns wide.
+[*]
+charset = utf-8
+indent_style = tab
+indent_size = 4
+tab_width = 4
+
+# Prose and YAML: spaces (a tab is not valid indentation in YAML).
+[*.md]
+indent_style = space
+indent_size = 2
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2

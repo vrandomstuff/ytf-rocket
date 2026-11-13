@@ -207,15 +207,30 @@ importers:
 
   .:
     dependencies:
+      '@tailwindcss/browser':
+        specifier: ^4.3.5
+        version: 4.3.5
+      alpinejs:
+        specifier: ^3.17.5
+        version: 3.17.5
       hls.js:
         specifier: ^1.7.4
         version: 1.7.4
     devDependencies:
+      '@types/alpinejs':
+        specifier: ^3.17.0
+        version: 3.17.0
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
 
 packages:
+
+  '@tailwindcss/browser@4.3.5':
+    resolution: {integrity: sha512-jm+efl1BzNaCMLSd1gSApQjaXYbuiwUtJLVPA2JVEZqN1MluOlZLR2LVnWvokY9B6Di1uJKq4SGMS/rupr0kbg==}
+
+  '@types/alpinejs@3.17.0':
+    resolution: {integrity: sha512-sVgCM7bI/tUiHZVpDTsx/UBhcck3WSed21CeraITFDL16nGJI/wCVEGCYu7QWtI9+/D2Ripx9wGXoSzQSDog6A==}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     resolution: {integrity: sha512-MTKKkWB7p/0E9xi1d1tHtZ5PiLkGEMIq88pK2CubZjOsLtYTLqhgIgi6zepFa+9GHZ6h05NMCkQxGKiPXMxXtQ==}
@@ -337,6 +352,15 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@vue/reactivity@3.5.45':
+    resolution: {integrity: sha512-WqkyubNWpI4OYBOipSrjIssMdJO8K1i9Zts/Wm8Er10/0msOEwCyWWWvZnAI7WW3kQsTong6DJp8Cbb+vd4cPA==}
+
+  '@vue/shared@3.5.45':
+    resolution: {integrity: sha512-ue9fgHmVNPlP7iW3+cxoBX/Cnlw53dHlVSw0JKGY6z1lObg8pHoj928M2nzG4/yVsMZ3NaRZ2s2z61uC16NDwQ==}
+
+  alpinejs@3.17.5:
+    resolution: {integrity: sha512-XewMqRC6zjy8iaUPn86dxjvooAsNai3hUtQbdn0A5H2w7Jt10xHGZ1SczN5+Dvp3UKkuSEt9moy/UaUWOwKdnQ==}
+
   hls.js@1.7.4:
     resolution: {integrity: sha512-3GlxGdPvT2YHvQYOt+yOzT/DEior/qJVNIylHA77kgeoBTdQQqi70GwefNEUmHQeNGyjC8U62+bruqW/Tpm+tg==}
 
@@ -346,6 +370,10 @@ packages:
     hasBin: true
 
 snapshots:
+
+  '@tailwindcss/browser@4.3.5': {}
+
+  '@types/alpinejs@3.17.0': {}
 
   '@typescript/typescript-aix-ppc64@7.0.2':
     optional: true
@@ -406,6 +434,16 @@ snapshots:
 
   '@typescript/typescript-win32-x64@7.0.2':
     optional: true
+
+  '@vue/reactivity@3.5.45':
+    dependencies:
+      '@vue/shared': 3.5.45
+
+  '@vue/shared@3.5.45': {}
+
+  alpinejs@3.17.5:
+    dependencies:
+      '@vue/reactivity': 3.5.45
 
   hls.js@1.7.4: {}
 

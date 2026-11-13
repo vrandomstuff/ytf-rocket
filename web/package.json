@@ -4,7 +4,8 @@
 	"description": "",
 	"main": "index.js",
 	"scripts": {
-		"build": "tsc && cp -r src/**/*.html dist/"
+		"build": "tsc && cp -r src/**/*.html dist/ && pnpm run vendor",
+		"vendor": "cp node_modules/alpinejs/dist/cdn.min.js dist/alpine.min.js && cp node_modules/@tailwindcss/browser/dist/index.global.js dist/tailwind.min.js && cp -r src/assets/ dist/"
 	},
 	"keywords": [],
 	"author": "",
@@ -18,9 +19,12 @@
 	},
 	"type": "module",
 	"devDependencies": {
+		"@types/alpinejs": "^3.17.0",
 		"typescript": "^7.0.2"
 	},
 	"dependencies": {
+		"@tailwindcss/browser": "^4.3.5",
+		"alpinejs": "^3.17.5",
 		"hls.js": "^1.7.4"
 	}
 }

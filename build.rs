@@ -52,13 +52,20 @@ const MULTIPLE_VERSIONS_NOTE: &str =
 	"NOTE: this package resolved to multiple versions with differing license texts.\n\
 	 Each distinct text is reproduced below.\n\n";
 
-// Both maps are intentionally empty. Keep the lookup/insertion code below so an
-// override or extra entry can be added without changing the generator itself.
-// Shape examples:
+// Keep the lookup/insertion code below so an override or extra entry can be
+// added without changing the generator itself. Shape examples:
 //   LICENSE_URL_OVERRIDES: &[("package-name", "https://example.com/LICENSE")]
 //   EXTRA_PACKAGES: &[("Apache-2.0", &[ExtraPackage { ... }])]
-const LICENSE_URL_OVERRIDES: &[(&str, &str)] = &[];
-const EXTRA_PACKAGES: &[(&str, &[ExtraPackage])] = &[];
+const LICENSE_URL_OVERRIDES: &[(&str, &str)] = &[("alpinejs", "https://raw.githubusercontent.com/alpinejs/alpine/refs/heads/main/LICENSE.md")];
+const EXTRA_PACKAGES: &[(&str, &[ExtraPackage])] = &[(
+	"Apache-2.0",
+	&[ExtraPackage {
+		name: "Material Design Icons",
+		versions: &[],
+		homepage: Some("https://fonts.google.com/icons"),
+		licenseUrl: Some("https://www.apache.org/licenses/LICENSE-2.0.txt"),
+	}],
+)];
 
 // A package entry from `pnpm licenses ls --json`. Most fields are optional in
 // the JSON, and `licenseUrl` is the fallback used when no license file exists in
@@ -250,7 +257,7 @@ fn generateModule(assets: &[Asset]) -> String {
 		let sourceSuffix = format!("/web/dist/{}", asset.relative);
 
 		code.push_str(&format!(
-			"#[get(\"{route}\")]\nfn file{index}() -> (rocket::http::ContentType, &'static [u8]) {{\n\t(\n\t\trocket::http::ContentType::from_extension(\"{extension}\")\n\t\t\t.unwrap_or(rocket::http::ContentType::Binary),\n\t\tinclude_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"{source}\")),\n\t)\n}}\n\n",
+			"#[get(\"{route}\")]\nfn embed{index}() -> (rocket::http::ContentType, &'static [u8]) {{\n\t(\n\t\trocket::http::ContentType::from_extension(\"{extension}\")\n\t\t\t.unwrap_or(rocket::http::ContentType::Binary),\n\t\tinclude_bytes!(concat!(env!(\"CARGO_MANIFEST_DIR\"), \"{source}\")),\n\t)\n}}\n\n",
 			route = asset.route,
 			index = index,
 			extension = asset.extension,
@@ -266,7 +273,7 @@ fn generateModule(assets: &[Asset]) -> String {
 		if index > 0 {
 			code.push_str(", ");
 		}
-		code.push_str(&format!("file{}", index));
+		code.push_str(&format!("embed{}", index));
 	}
 	code.push_str("]\n}\n");
 

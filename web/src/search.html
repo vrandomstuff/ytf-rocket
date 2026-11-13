@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html>
+  <head>
+	<title>ytf-rocket</title>
+	<script src="alpine.min.js" defer></script>
+	<script src="tailwind.min.js"></script>
+	<script src="search.js" defer type="module"></script>
+	<link rel="preconnect" href="https://fonts.googleapis.com">
+	<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+	<link href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&display=swap" rel="stylesheet">
+  </head>
+  <body class="min-h-screen p-4 bg-black text-[#ededed]">
+	<template id="VideoElement">
+	  <div x-cloak x-data="{ videoInfo: {} }" class="flex flex-row w-fit p-[5px] rounded-[20px] bg-[#424242] border-[5px] border-[#292828]">
+			<a x-bind:href="`/watch.html?v=${videoInfo.id}`">
+				<img
+					x-bind:src="videoInfo.thumbnail"
+					x-bind:alt="`Thumbnail for the video: ${videoInfo.title}`"
+					x-bind:title="videoInfo.title"
+					crossorigin="anonymous"
+					class="rounded-[15px] max-w-[90vw] max-h-[40vh] w-[420px] h-[236px]"
+				/>
+				<br />
+				<h2 x-text="videoInfo.title" class="font-[lato] text-2xl font-bold max-w-[500px]"></h2>
+			</a>
+			<a x-bind:href="`/channel/${videoInfo.channel}`">
+			  <img class="w-[50px] h-[50px] bg-transparent rounded-full" x-bind:src="videoInfo.channelAvatar" x-bind:alt="videoInfo.channelName" x-bind:title="videoInfo.channelName"/>
+			</a>
+			<br />
+	  </div>
+	</template>
+	<div id="searchResults" />
+  </body>
+</html>
