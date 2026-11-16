@@ -1,16 +1,35 @@
-<!DOCTYPE html>
+<!doctype html>
 <html>
-  <head>
-	<title>ytf-rocket</title>
-	<script src="alpine.min.js" defer></script>
-	<script src="tailwind.min.js"></script>
-  </head>
-  <body class="min-h-screen flex items-center justify-center p-4 bg-black" x-cloak>
-	<div class="rounded-xl bg-[#424242] w-fit p-2 gap-x-2 flex max-w-sm items-center" x-data="{ query: '' }">
-	  <input class="border-[5px] border-black rounded-xl text-white bg-[#353535]" aria-label="Search query" type="text" x-model="query" x-on:keydown="if(event.key === 'Enter') location = `${location.origin}/search.html?q=${encodeURIComponent(query)}`">
-	  <button class="border-[2px] border-black rounded-xl bg-[#353535]" aria-label="Search" x-on:click="location = `${location.origin}/search.html?q=${encodeURIComponent(query)}`">
-		<img src="assets/search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg" alt="" />
-	  </button>
-	</div>
-  </body>
+	<head>
+		<title>ytf-rocket</title>
+		<script src="alpine.min.js" defer></script>
+		<script src="tailwind.min.js"></script>
+	</head>
+	<body
+		class="min-h-screen flex items-center justify-center p-4 bg-black"
+		x-cloak
+	>
+		<div
+			class="rounded-xl bg-[#424242] w-fit p-2 gap-x-2 flex max-w-sm items-center"
+			x-data="{ query: '' }"
+		>
+			<input
+				class="border-[5px] border-black rounded-xl text-white bg-[#353535]"
+				aria-label="Search query"
+				type="text"
+				x-model="query"
+				x-on:keydown="if(event.key === 'Enter') location = `${location.origin}/search.html?q=${encodeURIComponent(query)}`"
+			/>
+			<button
+				class="border-[2px] border-black rounded-xl bg-[#353535]"
+				aria-label="Search"
+				x-on:click="location = `${location.origin}/search.html?q=${encodeURIComponent(query)}`"
+			>
+				<img
+					src="assets/search_24dp_E3E3E3_FILL0_wght400_GRAD0_opsz24.svg"
+					alt=""
+				/>
+			</button>
+		</div>
+	</body>
 </html>

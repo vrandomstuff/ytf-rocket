@@ -1,0 +1,49 @@
+# rustfmt configuration for ytf-rocket.
+#
+# This encodes the hand-maintained conventions described in AGENTS.md,
+# .editorconfig and the NOTES block at the top of src/main.rs. Nothing in the
+# tree has been through rustfmt yet, so this is the shape the code should keep,
+# not a description of what it currently looks like. Formatting the whole tree
+# is its own change; don't fold it into unrelated work.
+#
+# Only stable options are listed so this works with stable rustfmt.
+
+# The repo indents with hard tabs, 4 columns wide (.editorconfig: [*]).
+hard_tabs = true
+tab_spaces = 4
+
+# Cargo.toml is edition 2024. rustfmt reads that from Cargo.toml on its own;
+# setting it here also covers running rustfmt directly on a source file.
+edition = "2024"
+
+# The longest real code lines are ~160 columns (long fn signatures and chained
+# calls). Comments go further and are deliberately left alone, so 160 keeps the
+# existing layout instead of exploding it package-wide.
+max_width = 160
+
+# Sort `use` items and `mod` declarations alphabetically within a group.
+# Comments attached to an item travel with it, so the note above
+# `innertube_rs::endpoints::player` in wrappers.rs stays on that import.
+reorder_imports = true
+reorder_modules = true
+
+# Comments are hand-wrapped (often wider than the code) and explain library
+# quirks, which the project explicitly asks for. Never reflow or rewrite them.
+wrap_comments = false
+normalize_comments = false
+format_code_in_doc_comments = false
+
+# The tree mixes LF and CRLF (src/main.rs is LF, src/wrappers.rs is CRLF), so
+# preserve each file's existing endings rather than picking one for the repo.
+newline_style = "Auto"
+
+# Struct literals spell out `field: field` (e.g. `avatar: avatar` in
+# wrappers.rs). This is rustfmt's default; pinned so the convention is visible.
+use_field_init_shorthand = false
+
+# No trailing commas anywhere: fn params, struct literals, arrays, match arms.
+# Extending such a list later means putting the comma on the previous line.
+trailing_comma = "Never"
+
+# Keep `match` arm bodies without a trailing comma, matching the hand style.
+match_block_trailing_comma = false

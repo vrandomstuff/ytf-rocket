@@ -1,0 +1,38 @@
+<!doctype html>
+<html>
+	<head>
+		<title>ytf-rocket</title>
+		<script src="alpine.min.js" defer></script>
+		<script src="tailwind.min.js"></script>
+		<script src="hls.js"></script>
+		<script src="watch.js" defer type="module"></script>
+		<link rel="preconnect" href="https://fonts.googleapis.com" />
+		<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+		<link
+			href="https://fonts.googleapis.com/css2?family=Lato:ital,wght@0,100;0,300;0,400;0,700;0,900;1,100;1,300;1,400;1,700;1,900&display=swap"
+			rel="stylesheet"
+		/>
+	</head>
+	<body class="min-h-screen p-4 bg-black text-[#ededed]">
+		<!--<script type="module">
+			const response = await fetch("/VideoElement.html");
+
+			if (!response.ok) {
+				throw new Error("Failed to load VideoElement.html");
+			}
+
+			const html = await response.text();
+
+			document.getElementById("VideoElement").innerHTML = html;
+
+			window.dispatchEvent(new Event("video-template-ready"));
+		</script>-->
+		<video
+			id="videoPlayer"
+			class="w-[50vw] h-[50vh]"
+			controls
+			playsinline
+			autoplay
+		/>
+	</body>
+</html>
