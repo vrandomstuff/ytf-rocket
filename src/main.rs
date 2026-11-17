@@ -16,7 +16,8 @@ TODO: (in order of most importent to least importent)
  */
 #![allow(nonstandard_style)]
 #![allow(unused_parens)]
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
 
 mod wrappers;
 
@@ -27,23 +28,21 @@ mod webAssets {
 	include!(concat!(env!("OUT_DIR"), "/webAssets.rs"));
 }
 
-use wrappers::{Video, Channel, CORSToken, getChannelMetadata, ytSearch};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use innertube_rs::Innertube;
-use tokio::sync::OnceCell;
-use std::time::{Instant, Duration};
 use moka::future::Cache;
+use reqwest::{
+	Client,
+	header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT}
+};
 use rocket::fairing::AdHoc;
 use rocket::http::Status;
 use rocket::request::Request;
-use rocket::response::{Response, Responder};
+use rocket::response::{Responder, Response};
 use std::io::Cursor;
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use reqwest::{
-	header::{
-		HeaderMap, HeaderValue, ACCEPT_LANGUAGE, USER_AGENT
-	},
-	Client
-};
+use std::time::{Duration, Instant};
+use tokio::sync::OnceCell;
+use wrappers::{CORSToken, Channel, Video, getChannelMetadata, ytSearch};
 
 // Global Innertube client container
 static innertubeCache: OnceCell<Innertube> = OnceCell::const_new();
@@ -54,9 +53,7 @@ type SearchCache = Cache<(String, u64), Vec<Video>>;
 pub async fn innertube() -> Result<&'static Innertube, String> {
 	innertubeCache
 		.get_or_try_init(|| async {
-			let result = Innertube::new()
-				.await
-				.map_err(|e| e.to_string());
+			let result = Innertube::new().await.map_err(|e| e.to_string());
 
 			return result;
 		})
@@ -70,8 +67,7 @@ async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelC
 	// Upstream/YouTube failures are reported as 503 instead of panicking; only a
 	// serialization bug can produce a 500.
 	let channel = getChannelMetadata(channelId, (**cache).clone(), (**keyString).clone()).await?;
-	return serde_json::to_string(&channel)
-		.map_err(|e| (Status::InternalServerError, e.to_string()))
+	return serde_json::to_string(&channel).map_err(|e| (Status::InternalServerError, e.to_string()));
 }
 
 // API
@@ -91,8 +87,7 @@ async fn apiSearch(
 
 	let videos = ytSearch(q, page, (**cache).clone(), (**channelCache).clone(), (**keyString).clone()).await?;
 
-	return serde_json::to_string(&videos)
-		.map_err(|e| (Status::InternalServerError, e.to_string()))
+	return serde_json::to_string(&videos).map_err(|e| (Status::InternalServerError, e.to_string()));
 }
 
 // Rocket's built-in responders for `Vec<u8>` / `(Status, T)` have no slot for
@@ -127,7 +122,7 @@ impl<'r> Responder<'r, 'static> for CorsProxyResponse {
 		// why an upstream `content-length` must never be copied through.
 		response.set_sized_body(self.body.len(), Cursor::new(self.body));
 
-		return Ok(response)
+		return Ok(response);
 	}
 }
 
@@ -213,34 +208,23 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<Cor
 
 	headers.insert(
 		USER_AGENT,
-		HeaderValue::from_static(
-			"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36"
-		),
+		HeaderValue::from_static("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/156.0.0.0 Safari/537.36")
 	);
 
-	headers.insert(
-		ACCEPT_LANGUAGE,
-		HeaderValue::from_static("en-US,en;q=0.9"),
-	);
+	headers.insert(ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
 
 	headers.insert(
 		"sec-ch-ua",
 		HeaderValue::from_static(
 			"\"Google Chrome\";v=\"156\", \
 			 \"Chromium\";v=\"156\", \
-			 \"Not_A Brand\";v=\"8\"",
-		),
+			 \"Not_A Brand\";v=\"8\""
+		)
 	);
 
-	headers.insert(
-		"sec-ch-ua-mobile",
-		HeaderValue::from_static("?0"),
-	);
+	headers.insert("sec-ch-ua-mobile", HeaderValue::from_static("?0"));
 
-	headers.insert(
-		"sec-ch-ua-platform",
-		HeaderValue::from_static("\"Windows\""),
-	);
+	headers.insert("sec-ch-ua-platform", HeaderValue::from_static("\"Windows\""));
 
 	let client = Client::builder()
 		.default_headers(headers)
@@ -271,7 +255,7 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<Cor
 		.filter_map(|(name, value)| {
 			// Header values are ASCII by definition; skip a non-ASCII one rather
 			// than failing the whole response over a single odd header.
-			return value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()))
+			return value.to_str().ok().map(|value| (name.as_str().to_string(), value.to_string()));
 		})
 		.collect();
 
@@ -287,7 +271,11 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<Cor
 		.map(|body| body.to_vec())
 		.map_err(|e| (Status::BadGateway, e.to_string()))?;
 
-	return Ok(CorsProxyResponse { status: upstreamStatus, body, headers: responseHeaders });
+	return Ok(CorsProxyResponse {
+		status: upstreamStatus,
+		body,
+		headers: responseHeaders
+	});
 }
 
 // debug endpoints
@@ -295,13 +283,9 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<Cor
 fn debugGetVideoCache(cache: &rocket::State<SearchCache>) -> Result<String, (Status, String)> {
 	#[cfg(debug_assertions)]
 	{
-		let contents: Vec<Video> = cache
-			.iter()
-			.flat_map(|(_key, videos)| videos)
-			.collect();
+		let contents: Vec<Video> = cache.iter().flat_map(|(_key, videos)| videos).collect();
 
-		return serde_json::to_string(&contents)
-			.map_err(|e| (Status::InternalServerError, e.to_string()));
+		return serde_json::to_string(&contents).map_err(|e| (Status::InternalServerError, e.to_string()));
 	}
 	#[cfg(not(debug_assertions))]
 	{
@@ -314,13 +298,9 @@ fn debugGetVideoCache(cache: &rocket::State<SearchCache>) -> Result<String, (Sta
 fn debugGetChannelCache(cache: &rocket::State<ChannelCache>) -> Result<String, (Status, String)> {
 	#[cfg(debug_assertions)]
 	{
-		let contents: Vec<_> = cache
-			.iter()
-			.map(|(_key, channel)| channel)
-			.collect();
+		let contents: Vec<_> = cache.iter().map(|(_key, channel)| channel).collect();
 
-		return serde_json::to_string(&contents)
-			.map_err(|e| (Status::InternalServerError, e.to_string()));
+		return serde_json::to_string(&contents).map_err(|e| (Status::InternalServerError, e.to_string()));
 	}
 	#[cfg(not(debug_assertions))]
 	{
@@ -334,8 +314,7 @@ fn debugGenerateCorsToken(toSign: String, keyString: &rocket::State<String>) -> 
 	#[cfg(debug_assertions)]
 	{
 		let token = CORSToken::new(toSign, keyString.to_string())?;
-		return serde_json::to_string(&token)
-			.map_err(|e| (Status::InternalServerError, e.to_string()));
+		return serde_json::to_string(&token).map_err(|e| (Status::InternalServerError, e.to_string()));
 	}
 	#[cfg(not(debug_assertions))]
 	{
@@ -403,14 +382,8 @@ fn health(userAgent: UserAgent) -> Result<&'static str, Status> {
 }
 #[launch]
 fn rocket() -> _ {
-	let searchCache: SearchCache = Cache::builder()
-		.time_to_live(Duration::from_hours(1))
-		.max_capacity(5000)
-		.build();
-	let channelCache: ChannelCache = Cache::builder()
-		.max_capacity(5000)
-		.time_to_live(Duration::from_hours(24))
-		.build();
+	let searchCache: SearchCache = Cache::builder().time_to_live(Duration::from_hours(1)).max_capacity(5000).build();
+	let channelCache: ChannelCache = Cache::builder().max_capacity(5000).time_to_live(Duration::from_hours(24)).build();
 
 	let mut keyBytes = [0u8; 32];
 
@@ -422,13 +395,26 @@ fn rocket() -> _ {
 		.manage(searchCache)
 		.manage(channelCache)
 		.manage(keyString)
-		.attach(AdHoc::on_ignite("Innertube Warmup", |rocket| Box::pin(async move {
-			let start = Instant::now();
-			let _ = innertube().await;
-			eprintln!("[STARTUP] Innertube pre-warmed in {:?}", start.elapsed());
-			rocket
-		})))
+		.attach(AdHoc::on_ignite("Innertube Warmup", |rocket| {
+			Box::pin(async move {
+				let start = Instant::now();
+				let _ = innertube().await;
+				eprintln!("[STARTUP] Innertube pre-warmed in {:?}", start.elapsed());
+				rocket
+			})
+		}))
 		.mount("/", webAssets::fileRoutes())
 		.mount("/", routes![health])
-		.mount("/api/v1", routes![apiIndex, apiSearch, apiGetChannelMetadata, corsProxy, debugGetVideoCache, debugGetChannelCache, debugGenerateCorsToken]) // increment the v number when making breaking changes in a clone of this line and add wrappers for the old versions to work
+		.mount(
+			"/api/v1",
+			routes![
+				apiIndex,
+				apiSearch,
+				apiGetChannelMetadata,
+				corsProxy,
+				debugGetVideoCache,
+				debugGetChannelCache,
+				debugGenerateCorsToken
+			]
+		) // increment the v number when making breaking changes in a clone of this line and add wrappers for the old versions to work
 }

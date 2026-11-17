@@ -45,11 +45,10 @@ const LICENSE_FILENAMES: &[&str] = &[
 	"licence.txt",
 	"licence.md",
 	"copying",
-	"copying.txt",
+	"copying.txt"
 ];
 
-const MULTIPLE_VERSIONS_NOTE: &str =
-	"NOTE: this package resolved to multiple versions with differing license texts.\n\
+const MULTIPLE_VERSIONS_NOTE: &str = "NOTE: this package resolved to multiple versions with differing license texts.\n\
 	 Each distinct text is reproduced below.\n\n";
 
 // Keep the lookup/insertion code below so an override or extra entry can be
@@ -63,8 +62,8 @@ const EXTRA_PACKAGES: &[(&str, &[ExtraPackage])] = &[(
 		name: "Material Design Icons",
 		versions: &[],
 		homepage: Some("https://fonts.google.com/icons"),
-		licenseUrl: Some("https://www.apache.org/licenses/LICENSE-2.0.txt"),
-	}],
+		licenseUrl: Some("https://www.apache.org/licenses/LICENSE-2.0.txt")
+	}]
 )];
 
 // A package entry from `pnpm licenses ls --json`. Most fields are optional in
@@ -80,7 +79,7 @@ struct Package {
 	homepage: Option<String>,
 	description: Option<String>,
 	#[serde(rename = "licenseUrl")]
-	licenseUrl: Option<String>,
+	licenseUrl: Option<String>
 }
 
 // Used only by EXTRA_PACKAGES for packages that are not installed by pnpm.
@@ -88,14 +87,14 @@ struct ExtraPackage {
 	name: &'static str,
 	versions: &'static [&'static str],
 	homepage: Option<&'static str>,
-	licenseUrl: Option<&'static str>,
+	licenseUrl: Option<&'static str>
 }
 
 struct Asset {
 	route: String,
 	// Path relative to `web/dist`, always using forward slashes.
 	relative: String,
-	extension: String,
+	extension: String
 }
 
 fn main() {
@@ -109,9 +108,7 @@ fn main() {
 	println!("cargo:rerun-if-changed=web/package.json");
 	println!("cargo:rerun-if-changed=web/pnpm-lock.yaml");
 
-	let manifestDir = PathBuf::from(
-		env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"),
-	);
+	let manifestDir = PathBuf::from(env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is set by Cargo"));
 	let webDir = manifestDir.join("web");
 	let distDir = webDir.join("dist");
 	let outDir = PathBuf::from(env::var("OUT_DIR").expect("OUT_DIR is set by Cargo"));
@@ -132,9 +129,7 @@ fn main() {
 		collectAssets(&distDir, &distDir, &mut assets);
 	} else {
 		// Keep `cargo check` usable before the frontend has ever been built.
-		println!(
-			"cargo:warning=web/dist not found; serving no frontend assets (run the frontend build first)"
-		);
+		println!("cargo:warning=web/dist not found; serving no frontend assets (run the frontend build first)");
 	}
 
 	// Directory iteration order is unspecified, so sort to keep the generated
@@ -142,20 +137,19 @@ fn main() {
 	assets.sort_by(|a, b| a.route.cmp(&b.route));
 	checkAssetRoutes(&assets);
 
-	fs::write(&outputPath, generateModule(&assets))
-		.unwrap_or_else(|e| panic!("failed to write {}: {}", outputPath.display(), e));
+	fs::write(&outputPath, generateModule(&assets)).unwrap_or_else(|e| panic!("failed to write {}: {}", outputPath.display(), e));
 }
 
 fn collectAssets(root: &Path, dir: &Path, assets: &mut Vec<Asset>) {
 	let entries = match fs::read_dir(dir) {
 		Ok(entries) => entries,
-		Err(e) => panic!("failed to read {}: {}", dir.display(), e),
+		Err(e) => panic!("failed to read {}: {}", dir.display(), e)
 	};
 
 	for entry in entries {
 		let entry = match entry {
 			Ok(entry) => entry,
-			Err(e) => panic!("failed to read an entry in {}: {}", dir.display(), e),
+			Err(e) => panic!("failed to read an entry in {}: {}", dir.display(), e)
 		};
 
 		let path = entry.path();
@@ -194,11 +188,7 @@ fn collectAssets(root: &Path, dir: &Path, assets: &mut Vec<Asset>) {
 				.filter(|extension| extension.chars().all(|c| c.is_ascii_alphanumeric()))
 				.unwrap_or_default();
 
-			assets.push(Asset {
-				route,
-				relative,
-				extension,
-			});
+			assets.push(Asset { route, relative, extension });
 		}
 	}
 }
@@ -207,9 +197,7 @@ fn validateRoute(route: &str, relative: &str) {
 	// Rocket route paths are static URIs. `<`, `>`, `?`, `#`, `%` and spaces
 	// would change their meaning (or be rejected), so fail the build instead of
 	// emitting a handler that cannot be mounted safely.
-	let isAllowed = route
-		.chars()
-		.all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~'));
+	let isAllowed = route.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '.' | '_' | '-' | '~'));
 
 	if !isAllowed {
 		panic!(
@@ -286,9 +274,7 @@ fn generateLicenses(webDir: &Path, distDir: &Path) -> Result<(), String> {
 	// EXTRA_PACKAGES is empty by default, but keep the insertion path so a
 	// package that is not installed by pnpm can still be listed.
 	for &(licenseName, packages) in EXTRA_PACKAGES {
-		data.entry(licenseName.to_string())
-			.or_default()
-			.extend(packages.iter().map(extraToPackage));
+		data.entry(licenseName.to_string()).or_default().extend(packages.iter().map(extraToPackage));
 	}
 
 	let licenseTexts = collectLicenseTexts(&data, distDir)?;
@@ -301,37 +287,23 @@ fn fetchLicenses(webDir: &Path) -> Result<BTreeMap<String, Vec<Package>>, String
 	let output = runPnpmLicenses(webDir)?;
 	if !output.status.success() {
 		let stderr = String::from_utf8_lossy(&output.stderr);
-		return Err(format!(
-			"pnpm licenses ls exited with {}: {}",
-			output.status,
-			stderr.trim()
-		));
+		return Err(format!("pnpm licenses ls exited with {}: {}", output.status, stderr.trim()));
 	}
 
-	let stdout = String::from_utf8(output.stdout)
-		.map_err(|e| format!("pnpm licenses output was not UTF-8: {}", e))?;
-	serde_json::from_str(&stdout)
-		.map_err(|e| format!("could not parse pnpm licenses output: {}", e))
+	let stdout = String::from_utf8(output.stdout).map_err(|e| format!("pnpm licenses output was not UTF-8: {}", e))?;
+	serde_json::from_str(&stdout).map_err(|e| format!("could not parse pnpm licenses output: {}", e))
 }
 
 fn runPnpmLicenses(webDir: &Path) -> Result<std::process::Output, String> {
 	// On Windows pnpm is normally a .cmd shim. `Command::new("pnpm")` does not
 	// always resolve those, so try the explicit shim name as well.
-	let candidates: &[&str] = if cfg!(windows) {
-		&["pnpm", "pnpm.cmd"]
-	} else {
-		&["pnpm"]
-	};
+	let candidates: &[&str] = if cfg!(windows) { &["pnpm", "pnpm.cmd"] } else { &["pnpm"] };
 
 	for program in candidates {
-		match Command::new(program)
-			.args(["licenses", "ls", "--json"])
-			.current_dir(webDir)
-			.output()
-		{
+		match Command::new(program).args(["licenses", "ls", "--json"]).current_dir(webDir).output() {
 			Ok(output) => return Ok(output),
 			Err(e) if e.kind() == ErrorKind::NotFound => continue,
-			Err(e) => return Err(format!("failed to run {}: {}", program, e)),
+			Err(e) => return Err(format!("failed to run {}: {}", program, e))
 		}
 	}
 
@@ -345,7 +317,7 @@ fn runPnpmLicenses(webDir: &Path) -> Result<std::process::Output, String> {
 			.output()
 		{
 			Ok(output) => Ok(output),
-			Err(e) => Err(format!("failed to run cmd /C pnpm: {}", e)),
+			Err(e) => Err(format!("failed to run cmd /C pnpm: {}", e))
 		}
 	}
 
@@ -362,17 +334,13 @@ fn extraToPackage(extra: &ExtraPackage) -> Package {
 		paths: Vec::new(),
 		homepage: extra.homepage.map(str::to_string),
 		description: None,
-		licenseUrl: extra.licenseUrl.map(str::to_string),
+		licenseUrl: extra.licenseUrl.map(str::to_string)
 	}
 }
 
-fn collectLicenseTexts(
-	data: &BTreeMap<String, Vec<Package>>,
-	distDir: &Path,
-) -> Result<HashMap<String, String>, String> {
+fn collectLicenseTexts(data: &BTreeMap<String, Vec<Package>>, distDir: &Path) -> Result<HashMap<String, String>, String> {
 	let licenseDir = distDir.join("licenses");
-	fs::create_dir_all(&licenseDir)
-		.map_err(|e| format!("failed to create {}: {}", licenseDir.display(), e))?;
+	fs::create_dir_all(&licenseDir).map_err(|e| format!("failed to create {}: {}", licenseDir.display(), e))?;
 
 	let agent = httpAgent();
 	let mut urls = HashMap::new();
@@ -399,7 +367,7 @@ fn collectLicenseTexts(
 						writeIfChanged(&destination, &bytes)?;
 						urls.insert(name.to_string(), format!("/licenses/{}", filename));
 					}
-					Err(e) => warnDownloadFailure(name, overrideUrl, &e),
+					Err(e) => warnDownloadFailure(name, overrideUrl, &e)
 				}
 				continue;
 			}
@@ -416,7 +384,7 @@ fn collectLicenseTexts(
 						writeIfChanged(&destination, &bytes)?;
 						urls.insert(name.to_string(), format!("/licenses/{}", filename));
 					}
-					Err(e) => warnDownloadFailure(name, remoteUrl, &e),
+					Err(e) => warnDownloadFailure(name, remoteUrl, &e)
 				}
 			}
 		}
@@ -427,16 +395,11 @@ fn collectLicenseTexts(
 }
 
 fn licenseUrlOverride(name: &str) -> Option<&'static str> {
-	LICENSE_URL_OVERRIDES
-		.iter()
-		.find(|(package, _)| *package == name)
-		.map(|(_, url)| *url)
+	LICENSE_URL_OVERRIDES.iter().find(|(package, _)| *package == name).map(|(_, url)| *url)
 }
 
 fn httpAgent() -> ureq::Agent {
-	let config = ureq::Agent::config_builder()
-		.timeout_global(Some(Duration::from_secs(30)))
-		.build();
+	let config = ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).build();
 	ureq::Agent::new_with_config(config)
 }
 
@@ -542,7 +505,7 @@ fn writeIfChanged(path: &Path, bytes: &[u8]) -> Result<(), String> {
 		Ok(existing) if existing == bytes => return Ok(()),
 		Ok(_) => {}
 		Err(e) if e.kind() == ErrorKind::NotFound => {}
-		Err(e) => return Err(format!("failed to read {}: {}", path.display(), e)),
+		Err(e) => return Err(format!("failed to read {}: {}", path.display(), e))
 	}
 
 	fs::write(path, bytes).map_err(|e| format!("failed to write {}: {}", path.display(), e))
@@ -557,8 +520,7 @@ fn writeIfChangedHtml(path: &Path, content: &str) -> Result<(), String> {
 		}
 	}
 
-	fs::write(path, content.as_bytes())
-		.map_err(|e| format!("failed to write {}: {}", path.display(), e))
+	fs::write(path, content.as_bytes()).map_err(|e| format!("failed to write {}: {}", path.display(), e))
 }
 
 fn stripTimestamp(text: &str) -> String {
@@ -569,29 +531,17 @@ fn stripTimestamp(text: &str) -> String {
 }
 
 fn pruneStaleLicenseFiles(licenseDir: &Path, expected: &HashSet<String>) -> Result<(), String> {
-	let entries = fs::read_dir(licenseDir)
-		.map_err(|e| format!("failed to read {}: {}", licenseDir.display(), e))?;
+	let entries = fs::read_dir(licenseDir).map_err(|e| format!("failed to read {}: {}", licenseDir.display(), e))?;
 
 	for entry in entries {
-		let entry = entry.map_err(|e| {
-			format!(
-				"failed to read an entry in {}: {}",
-				licenseDir.display(),
-				e
-			)
-		})?;
+		let entry = entry.map_err(|e| format!("failed to read an entry in {}: {}", licenseDir.display(), e))?;
 		let path = entry.path();
 		let name = entry.file_name().to_string_lossy().into_owned();
 
 		// Only remove files this generator owns. The directory is dedicated to
 		// generated license texts, but leaving unrelated files alone is safer.
-		if path.is_file()
-			&& name.starts_with("LICENSE.")
-			&& name.ends_with(".txt")
-			&& !expected.contains(&name)
-		{
-			fs::remove_file(&path)
-				.map_err(|e| format!("failed to remove {}: {}", path.display(), e))?;
+		if path.is_file() && name.starts_with("LICENSE.") && name.ends_with(".txt") && !expected.contains(&name) {
+			fs::remove_file(&path).map_err(|e| format!("failed to remove {}: {}", path.display(), e))?;
 		}
 	}
 
@@ -622,12 +572,7 @@ fn render(data: &BTreeMap<String, Vec<Package>>, licenseTexts: &HashMap<String, 
 			.join(", ");
 
 		let mut sortedPackages: Vec<&Package> = packages.iter().collect();
-		sortedPackages.sort_by_key(|pkg| {
-			pkg.name
-				.as_deref()
-				.unwrap_or("unknown")
-				.to_lowercase()
-		});
+		sortedPackages.sort_by_key(|pkg| pkg.name.as_deref().unwrap_or("unknown").to_lowercase());
 
 		let mut items = String::new();
 		for pkg in sortedPackages {
@@ -642,20 +587,13 @@ fn render(data: &BTreeMap<String, Vec<Package>>, licenseTexts: &HashMap<String, 
 			};
 
 			let nameHtml = if let Some(homepage) = pkg.homepage.as_deref() {
-				format!(
-					"<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{}</a>",
-					htmlEscape(homepage),
-					name
-				)
+				format!("<a href=\"{}\" target=\"_blank\" rel=\"noopener\">{}</a>", htmlEscape(homepage), name)
 			} else {
 				name
 			};
 
 			let textHtml = if let Some(textUrl) = licenseTexts.get(rawName) {
-				format!(
-					"<a class=\"text-link\" href=\"{}\">license text</a>",
-					htmlEscape(textUrl)
-				)
+				format!("<a class=\"text-link\" href=\"{}\">license text</a>", htmlEscape(textUrl))
 			} else {
 				String::new()
 			};
@@ -666,16 +604,10 @@ fn render(data: &BTreeMap<String, Vec<Package>>, licenseTexts: &HashMap<String, 
 				String::new()
 			};
 
-			items.push_str(&format!(
-				"<li>{}{}{}{}</li>",
-				nameHtml, versionHtml, textHtml, descriptionHtml
-			));
+			items.push_str(&format!("<li>{}{}{}{}</li>", nameHtml, versionHtml, textHtml, descriptionHtml));
 		}
 
-		sections.push_str(&format!(
-			"<section><h2>{}</h2><ul>{}</ul></section>",
-			idLinks, items
-		));
+		sections.push_str(&format!("<section><h2>{}</h2><ul>{}</ul></section>", idLinks, items));
 	}
 
 	let generated = formatTimestamp();
@@ -796,7 +728,7 @@ fn htmlEscape(value: &str) -> String {
 			'>' => escaped.push_str("&gt;"),
 			'"' => escaped.push_str("&quot;"),
 			'\'' => escaped.push_str("&#x27;"),
-			_ => escaped.push(character),
+			_ => escaped.push(character)
 		}
 	}
 
