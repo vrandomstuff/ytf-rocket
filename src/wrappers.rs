@@ -32,8 +32,8 @@ pub struct Channel {
 // instead of emitting an empty string (it is a stable permalink).
 const defaultAvatar: &str = "https://yt3.googleusercontent.com/a/default-user=s100-c-k-c0x00ffffff-no-rj";
 
-pub fn generateCorsUrl(url: String, keyString: String) -> Result<String, (Status, String)> {
-	let urlCORSToken = CORSToken::new(url, keyString.clone())?;
+pub fn generateCorsUrl(url: String, keyString: String, rewriteContent: bool) -> Result<String, (Status, String)> {
+	let urlCORSToken = CORSToken::new(url, keyString.clone(), rewriteContent)?;
 	let urlTokenJson = serde_json::to_string(&urlCORSToken).map_err(|e| (Status::InternalServerError, e.to_string()))?;
 	let urlToken = URL_SAFE_NO_PAD.encode(urlTokenJson);
 	return Ok(format!("/api/v1/cors/{}", urlToken));
@@ -51,8 +51,8 @@ pub async fn getChannelMetadata(channelId: String, cache: crate::ChannelCache, k
 		.map_err(|e| (Status::ServiceUnavailable, e.to_string()))?;
 	// `transpose` turns `Option<Result<T, E>>` into `Result<Option<T>, E>` so a
 	// missing banner/avatar stays `None` while a failing token encode propagates.
-	let banner = about.banner.map(|url| generateCorsUrl(url, keyString.clone())).transpose()?;
-	let avatar = about.avatar.map(|url| generateCorsUrl(url, keyString.clone())).transpose()?;
+	let banner = about.banner.map(|url| generateCorsUrl(url, keyString.clone(), false)).transpose()?;
+	let avatar = about.avatar.map(|url| generateCorsUrl(url, keyString.clone(), false)).transpose()?;
 	let channel = Channel {
 		id: about.channel_id,
 		name: about.title,
@@ -77,7 +77,7 @@ pub async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: crate::Channe
 		.max_by_key(|thumb| thumb.width.saturating_mul(thumb.height))
 		.map(|thumb| thumb.url.clone())
 		.unwrap_or_default();
-	let thumbnailUrl = generateCorsUrl(thumbnail, keyString.clone())?;
+	let thumbnailUrl = generateCorsUrl(thumbnail, keyString.clone(), false)?;
 	// `channel_id` can be empty for odd result types, so avoid emitting a bare URL.
 	let channel = if item.channel_id.is_empty() { String::new() } else { item.channel_id.clone() };
 
@@ -85,13 +85,12 @@ pub async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: crate::Channe
 	// back to the placeholder innertube itself returns for unknown channels rather
 	// than failing the whole search page.
 	let channelAvatar = if channel.is_empty() {
-		generateCorsUrl(defaultAvatar.to_string(), keyString.clone())?
+		generateCorsUrl(defaultAvatar.to_string(), keyString.clone(), false)?
 	} else {
 		match getChannelMetadata(channel.clone(), cache, keyString.clone()).await {
 			Ok(metadata) => metadata.avatar.unwrap_or_else(|| defaultAvatar.to_string()),
-			Err((_status, e)) => {
-				eprintln!("[PROFILE] channel metadata lookup failed for '{}': {}", channel, e);
-				defaultAvatar.to_string()
+			Err((_status, _e)) => {
+				generateCorsUrl(defaultAvatar.to_string(), keyString.clone(), false)?
 			}
 		}
 	};
@@ -160,15 +159,17 @@ pub async fn ytSearch(
 pub struct CORSToken {
 	pub url: String,
 	pub signature: String,
-	pub exp: u64
+	pub exp: u64,
+	pub rewriteResponseContent: bool
 }
 
 impl CORSToken {
-	pub fn new(toSign: String, secret: String) -> Result<CORSToken, (Status, String)> {
-		let expiresAt = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() + 6 * 60 * 60 * 1000) as u64; // 6 hours, googlevideo urls expire after around 6 hours so we just use the same amount
+	pub fn new(toSign: String, secret: String, rewriteContent: bool) -> Result<CORSToken, (Status, String)> {
+		let expiresAt = (SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_millis() + 25 * 60 * 60 * 1000) as u64; // 25 hours
 		let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).map_err(|e| (Status::InternalServerError, e.to_string()))?;
 
 		mac.update(toSign.as_bytes());
+		mac.update(&[u8::from(rewriteContent)]);
 		mac.update(&expiresAt.to_ne_bytes());
 		let result = mac.finalize();
 
@@ -177,7 +178,8 @@ impl CORSToken {
 		return Ok(CORSToken {
 			url: toSign,
 			signature: hex::encode(tag),
-			exp: expiresAt
+			exp: expiresAt,
+			rewriteResponseContent: rewriteContent
 		});
 	}
 
@@ -191,7 +193,10 @@ impl CORSToken {
 
 		let mut mac = HmacSha256::new_from_slice(secret.as_bytes()).expect("Invalid key");
 
+		// Must feed the MAC the exact same fields, in the same order, as `new`;
+		// a missing one here makes every token fail verification.
 		mac.update(self.url.as_bytes());
+		mac.update(&[u8::from(self.rewriteResponseContent)]);
 		mac.update(&self.exp.to_ne_bytes());
 
 		return mac.verify_slice(&tag).is_ok();

@@ -3313,6 +3313,7 @@ dependencies = [
  "hmac",
  "innertube-rs",
  "moka",
+ "regex",
  "reqwest 0.13.5",
  "rocket",
  "serde",

@@ -9,10 +9,10 @@ The API is a subset of https://raw.githubusercontent.com/vrandomstuff/safe-yt-vi
 
 /*
 TODO: (in order of most importent to least importent)
-- m3u8 route
-- Web frontend
+- Finish web frontend
 - SponsorBlock integration
 - Optional DeArrow integration
+- Access-Control-Allow-Origin: * on every endpoint
  */
 #![allow(nonstandard_style)]
 #![allow(unused_parens)]
@@ -20,7 +20,7 @@ TODO: (in order of most importent to least importent)
 extern crate rocket;
 
 mod wrappers;
-
+mod hls;
 // `build.rs` generates this file in OUT_DIR from `web/dist/`. It contains one
 // `#[get]` handler per frontend file plus `fileRoutes()`, which returns all of
 // them as a `Vec<rocket::Route>` so they can be mounted in one call.
@@ -42,14 +42,24 @@ use rocket::response::{Responder, Response};
 use std::io::Cursor;
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
-use wrappers::{CORSToken, Channel, Video, getChannelMetadata, ytSearch};
+use wrappers::{CORSToken, Channel, Video, getChannelMetadata, ytSearch, generateCorsUrl};
+use hls::{M3u8, getM3u8};
+use std::sync::LazyLock;
+use regex::bytes::Regex;
+
+static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
+	Regex::new(r"(?m)^https?://\S+$").unwrap()
+});
 
 // Global Innertube client container
 static innertubeCache: OnceCell<Innertube> = OnceCell::const_new();
 // In-memory cache for search results (expires after 1 hour, max 5000 entries).
 // Stores the flattened `Video` shape so a cache hit can be serialized directly.
 type SearchCache = Cache<(String, u64), Vec<Video>>;
-
+// TTL: 1 day, Max: 5000
+type ChannelCache = Cache<String, Channel>;
+// TTL: 20 minutes, No max
+type M3u8Cache = Cache<String, M3u8>;
 pub async fn innertube() -> Result<&'static Innertube, String> {
 	innertubeCache
 		.get_or_try_init(|| async {
@@ -59,8 +69,7 @@ pub async fn innertube() -> Result<&'static Innertube, String> {
 		})
 		.await
 }
-// TTL: 1 day Max: 5000
-type ChannelCache = Cache<String, Channel>;
+
 
 #[get("/channelMetadata?<channelId>")]
 async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelCache>, keyString: &rocket::State<String>) -> Result<String, (Status, String)> {
@@ -88,6 +97,70 @@ async fn apiSearch(
 	let videos = ytSearch(q, page, (**cache).clone(), (**channelCache).clone(), (**keyString).clone()).await?;
 
 	return serde_json::to_string(&videos).map_err(|e| (Status::InternalServerError, e.to_string()));
+}
+
+// Prefix for URLs that leave this server (the HLS playlist). A browser resolves
+// playlist-relative URIs against the playlist URL, but VLC and other non-browser
+// players do not, so the renditions have to be absolute. `Request::uri()` only
+// carries path and query, so the authority comes from the `Host` header and the
+// scheme from `X-Forwarded-Proto` (set when a reverse proxy terminates TLS) or
+// from Rocket's own TLS config when Rocket terminates it.
+struct BaseUrl(String);
+
+#[rocket::async_trait]
+impl<'r> rocket::request::FromRequest<'r> for BaseUrl {
+	type Error = std::convert::Infallible;
+
+	async fn from_request(req: &'r rocket::Request<'_>) -> rocket::request::Outcome<Self, Self::Error> {
+		let scheme = req
+			.headers()
+			.get_one("X-Forwarded-Proto")
+			// Proxies may append to the header, but the left-most value describes
+			// the client-facing hop.
+			.and_then(|proto| proto.split(',').next())
+			.map(str::trim)
+			.filter(|proto| *proto == "http" || *proto == "https")
+			.unwrap_or(if req.rocket().config().tls_enabled() { "https" } else { "http" });
+
+		// HTTP/1.1 clients always send `Host`; the config fallback only covers
+		// hand-written requests that omit it.
+		let host = match req.host() {
+			Some(host) => host.to_string(),
+			None => format!("{}:{}", req.rocket().config().address, req.rocket().config().port)
+		};
+
+		rocket::request::Outcome::Success(BaseUrl(format!("{}://{}", scheme, host)))
+	}
+}
+
+#[get("/m3u8/<videoId>")]
+async fn apiGetM3u8(videoId: &str, keyString: &rocket::State<String>, cache: &rocket::State<M3u8Cache>, baseUrl: BaseUrl) -> Result<String, (Status, String)> {
+	// Cache the parsed renditions, not the signed playlist: the tokens carry an
+	// expiry, so building them per request keeps a cached entry valid for its
+	// whole 20-minute TTL.
+	let m3u8: M3u8 = match cache.get(videoId).await {
+		Some(cached) => cached,
+		None => {
+			let fetched = getM3u8(videoId.to_string()).await?;
+			cache.insert(videoId.to_string(), fetched.clone()).await;
+			fetched
+		}
+	};
+
+	// `generateCorsUrl` returns a root-relative path (`/api/v1/cors/<token>`), so
+	// prepending the base URL is enough; adding a separator would double the slash.
+	// The renditions are HLS *media* playlists, whose segment URIs are relative
+	// to the googlevideo URL, so mark them for body rewriting in corsProxy.
+	let audioUrl = format!("{}{}", baseUrl.0, generateCorsUrl(m3u8.audio, keyString.to_string(), true)?);
+	let videoUrl = format!("{}{}", baseUrl.0, generateCorsUrl(m3u8.video, keyString.to_string(), true)?);
+
+	return Ok(format!(
+		"#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{}\"\n#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={},AUDIO=\"audio\"\n{}",
+		audioUrl,
+		m3u8.videoBandwidth,
+		m3u8.videoRes,
+		videoUrl
+	));
 }
 
 // Rocket's built-in responders for `Vec<u8>` / `(Status, T)` have no slot for
@@ -126,6 +199,38 @@ impl<'r> Responder<'r, 'static> for CorsProxyResponse {
 	}
 }
 
+fn rewriteUrls(
+	input: &[u8],
+	baseUrl: &str,
+	keyString: &str
+) -> Result<Vec<u8>, (Status, String)> {
+	let mut result = Vec::with_capacity(input.len());
+	let mut lastEnd = 0;
+
+	for mat in URL_REGEX.find_iter(input) {
+		result.extend_from_slice(&input[lastEnd..mat.start()]);
+
+		let url = std::str::from_utf8(mat.as_bytes())
+			.map_err(|e| (Status::BadRequest, e.to_string()))?
+			.to_string();
+
+		let rewritten = generateCorsUrl(
+			url,
+			keyString.to_string(),
+			false
+		)?;
+
+		result.extend_from_slice(baseUrl.as_bytes());
+		result.extend_from_slice(rewritten.as_bytes());
+
+		lastEnd = mat.end();
+	}
+
+	result.extend_from_slice(&input[lastEnd..]);
+
+	Ok(result)
+}
+
 // Headers that must not be echoed back to the client. The upstream response
 // describes YouTube's origin/connection, so forwarding these would either apply
 // the wrong policy to *our* origin or make the browser reject the response:
@@ -146,6 +251,7 @@ impl<'r> Responder<'r, 'static> for CorsProxyResponse {
 // Deliberately *not* skipped: `content-type`, `content-encoding` (reqwest strips it
 // when it decompresses), `content-range`/`accept-ranges` (needed for HLS seeking),
 // `cache-control`/`etag`/`last-modified`/`expires` (the proxy sets no cache policy).
+
 const proxySkippedHeaders: [&str; 45] = [
 	"content-length",
 	"transfer-encoding",
@@ -195,7 +301,7 @@ const proxySkippedHeaders: [&str; 45] = [
 ];
 
 #[get("/cors/<token>")]
-async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<CorsProxyResponse, (Status, String)> {
+async fn corsProxy(token: &str, keyString: &rocket::State<String>, baseUrl: BaseUrl) -> Result<CorsProxyResponse, (Status, String)> {
 	let decodedTokenAsBytes: Vec<u8> = URL_SAFE_NO_PAD.decode(&token).map_err(|e| (Status::BadRequest, e.to_string()))?;
 	let decodedToken: String = String::from_utf8(decodedTokenAsBytes).map_err(|e| (Status::BadRequest, e.to_string()))?;
 	let corsToken: CORSToken = serde_json::from_str(&decodedToken).map_err(|e| (Status::BadRequest, e.to_string()))?;
@@ -265,12 +371,16 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>) -> Result<Cor
 		responseHeaders.push(("content-type".to_string(), "application/octet-stream".to_string()));
 	}
 
-	let body = response
+	let mut body = response
 		.bytes()
 		.await
 		.map(|body| body.to_vec())
 		.map_err(|e| (Status::BadGateway, e.to_string()))?;
 
+	if (corsToken.rewriteResponseContent) {
+		body = rewriteUrls(&body, &baseUrl.0, keyString)?;
+	}
+	
 	return Ok(CorsProxyResponse {
 		status: upstreamStatus,
 		body,
@@ -313,12 +423,13 @@ fn debugGetChannelCache(cache: &rocket::State<ChannelCache>) -> Result<String, (
 fn debugGenerateCorsToken(toSign: String, keyString: &rocket::State<String>) -> Result<String, (Status, String)> {
 	#[cfg(debug_assertions)]
 	{
-		let token = CORSToken::new(toSign, keyString.to_string())?;
+		let token = CORSToken::new(toSign, keyString.to_string(), false)?;
 		return serde_json::to_string(&token).map_err(|e| (Status::InternalServerError, e.to_string()));
 	}
 	#[cfg(not(debug_assertions))]
 	{
 		let _ = keyString;
+		let _ = toSign;
 		return Ok("Only in debug mode".to_string());
 	}
 }
@@ -326,12 +437,12 @@ fn debugGenerateCorsToken(toSign: String, keyString: &rocket::State<String>) -> 
 #[get("/")]
 fn apiIndex() -> &'static str {
 	"
-/api/m3u8/<video> - Get m3u8 master playlist for a video.
-/api/cors/<token> - CORS proxy, token is a base64 encoded json object see the CORSToken struct. The upstream body, status code and response headers are returned (headers minus hop-by-hop, CORS, cookie, caching-policy and browser-policy ones, see proxySkippedHeaders). Only proxy-level failures use this server's own codes (400 bad token, 401 expired/bad signature, 502 upstream transport error).
-/api/search?q=<search query>&page=(page 1-256) - Get array of videos for a search query.
-/api/channelMetadata?channelId=<channel id> - Get channel metadata for channelId
-/api/debugGetVideoCache - Get the contents of the video cache DEBUG MODE ONLY
-/api/debugGetChannelCache - Get the contents of the channel cache DEBUG MODE ONLY
+/api/v1/m3u8/<video> - Get m3u8 master playlist for a video.
+/api/v1/cors/<token> - CORS proxy, token is a base64 encoded json object see the CORSToken struct. The upstream body, status code and response headers are returned (headers minus hop-by-hop, CORS, cookie, caching-policy and browser-policy ones, see proxySkippedHeaders). Only proxy-level failures use this server's own codes (400 bad token, 401 expired/bad signature, 502 upstream transport error).
+/api/v1/search?q=<search query>&page=(page 1-20) - Get array of videos for a search query.
+/api/v1/channelMetadata?channelId=<channel id> - Get channel metadata for channelId
+/api/v1/debugGetVideoCache - Get the contents of the video cache DEBUG MODE ONLY
+/api/v1/debugGetChannelCache - Get the contents of the channel cache DEBUG MODE ONLY
 
 Structs that are given in responses:
 
@@ -353,10 +464,11 @@ struct Channel {
 	banner: Option<String>
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
-struct CORSToken {
-	url: String,
-	signature: String
-	exp: u64
+pub struct CORSToken {
+	pub url: String,
+	pub signature: String,
+	pub exp: u64,
+	pub rewriteResponseContent: bool
 }
 	"
 }
@@ -384,7 +496,7 @@ fn health(userAgent: UserAgent) -> Result<&'static str, Status> {
 fn rocket() -> _ {
 	let searchCache: SearchCache = Cache::builder().time_to_live(Duration::from_hours(1)).max_capacity(5000).build();
 	let channelCache: ChannelCache = Cache::builder().max_capacity(5000).time_to_live(Duration::from_hours(24)).build();
-
+	let m3u8Cache: M3u8Cache = Cache::builder().time_to_live(Duration::from_mins(20)).build();
 	let mut keyBytes = [0u8; 32];
 
 	getrandom::fill(&mut keyBytes).unwrap();
@@ -394,6 +506,7 @@ fn rocket() -> _ {
 	rocket::build()
 		.manage(searchCache)
 		.manage(channelCache)
+		.manage(m3u8Cache)
 		.manage(keyString)
 		.attach(AdHoc::on_ignite("Innertube Warmup", |rocket| {
 			Box::pin(async move {
@@ -412,6 +525,7 @@ fn rocket() -> _ {
 				apiSearch,
 				apiGetChannelMetadata,
 				corsProxy,
+				apiGetM3u8,
 				debugGetVideoCache,
 				debugGetChannelCache,
 				debugGenerateCorsToken
