@@ -26,13 +26,18 @@
 			document.getElementById("VideoElement").innerHTML = html;
 
 			window.dispatchEvent(new Event("video-template-ready"));
-		</script>-->
+			</script>-->
+		<button onclick="history.back()">back</button>
 		<video
 			id="videoPlayer"
 			class="w-[50vw] h-[50vh]"
 			controls
 			playsinline
 			autoplay
-		/>
+			></video>
+		<h1
+			id="videoTitle"
+			class="font-[lato] text-2xl font-bold"
+			></h1>
 	</body>
 </html>

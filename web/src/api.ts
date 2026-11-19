@@ -1,10 +1,9 @@
-export const API_BASE_URL = `${window.location.origin}/api/v1`;
+export const API_BASE_URL = `${window.location.origin}/api/v2`;
 
 export interface Video {
 	id: string;
 	thumbnail: string;
 	channel: string;
-	channelAvatar: string;
 	channelName: string;
 	title: string;
 }

@@ -3,27 +3,26 @@
 	x-data="{ videoInfo: {} }"
 	class="flex flex-row w-fit p-[5px] rounded-[20px] bg-[#424242] border-[5px] border-[#292828]"
 >
-	<a x-bind:href="`/watch.html?v=${videoInfo.id}`">
-		<img
-			x-bind:src="videoInfo.thumbnail"
-			x-bind:alt="`Thumbnail for the video: ${videoInfo.title}`"
-			x-bind:title="videoInfo.title"
-			crossorigin="anonymous"
-			class="rounded-[15px] max-w-[90vw] max-h-[40vh] w-[420px] h-[236px]"
-		/>
-		<br />
-		<h2
-			x-text="videoInfo.title"
-			class="font-[lato] text-2xl font-bold max-w-[500px]"
-		></h2>
-	</a>
-	<a x-bind:href="`/channel?c=${videoInfo.channel}`">
-		<img
-			class="w-[50px] h-[50px] bg-transparent rounded-full"
-			x-bind:src="videoInfo.channelAvatar"
-			x-bind:alt="videoInfo.channelName"
-			x-bind:title="videoInfo.channelName"
-		/>
-	</a>
-	<br />
+	<div>
+		<a x-bind:href="`/watch.html?v=${videoInfo.id}`">
+			<img
+				x-bind:src="videoInfo.thumbnail"
+				x-bind:alt="`Thumbnail for the video: ${videoInfo.title}`"
+				x-bind:title="videoInfo.title"
+				crossorigin="anonymous"
+				class="rounded-[15px] max-w-[90vw] max-h-[40vh] w-[420px] h-[236px]"
+			/>
+			<br />
+			<h2
+				x-text="videoInfo.title"
+				class="font-[lato] text-2xl font-bold max-w-[500px]"
+			></h2>
+		</a>
+		<a x-bind:href="`/channel?c=${videoInfo.channel}`">
+			<h2
+				x-text="`- ${videoInfo.channelName}`"
+				class="font-[lato] text-xl font-bold max-w-[500px]"
+			></h2>
+		</a>
+	</div>
 </div>

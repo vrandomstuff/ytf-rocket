@@ -19,8 +19,8 @@ TODO: (in order of most importent to least importent)
 #[macro_use]
 extern crate rocket;
 
-mod wrappers;
 mod hls;
+mod wrappers;
 // `build.rs` generates this file in OUT_DIR from `web/dist/`. It contains one
 // `#[get]` handler per frontend file plus `fileRoutes()`, which returns all of
 // them as a `Vec<rocket::Route>` so they can be mounted in one call.
@@ -29,8 +29,10 @@ mod webAssets {
 }
 
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use hls::{M3u8, getM3u8};
 use innertube_rs::Innertube;
 use moka::future::Cache;
+use regex::bytes::Regex;
 use reqwest::{
 	Client,
 	header::{ACCEPT_LANGUAGE, HeaderMap, HeaderValue, USER_AGENT}
@@ -40,16 +42,12 @@ use rocket::http::Status;
 use rocket::request::Request;
 use rocket::response::{Responder, Response};
 use std::io::Cursor;
+use std::sync::LazyLock;
 use std::time::{Duration, Instant};
 use tokio::sync::OnceCell;
-use wrappers::{CORSToken, Channel, Video, getChannelMetadata, ytSearch, generateCorsUrl};
-use hls::{M3u8, getM3u8};
-use std::sync::LazyLock;
-use regex::bytes::Regex;
+use wrappers::{CORSToken, Channel, Video, VideoV1, defaultChannelAvatarUrl, generateCorsUrl, getChannelMetadata, videoToVideoV1, ytSearch};
 
-static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-	Regex::new(r"(?m)^https?://\S+$").unwrap()
-});
+static URL_REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?m)^https?://\S+$").unwrap());
 
 // Global Innertube client container
 static innertubeCache: OnceCell<Innertube> = OnceCell::const_new();
@@ -70,7 +68,6 @@ pub async fn innertube() -> Result<&'static Innertube, String> {
 		.await
 }
 
-
 #[get("/channelMetadata?<channelId>")]
 async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelCache>, keyString: &rocket::State<String>) -> Result<String, (Status, String)> {
 	// Upstream/YouTube failures are reported as 503 instead of panicking; only a
@@ -81,22 +78,33 @@ async fn apiGetChannelMetadata(channelId: String, cache: &rocket::State<ChannelC
 
 // API
 #[get("/search?<q>&<page>")]
-async fn apiSearch(
-	q: String,
-	page: u64,
-	cache: &rocket::State<SearchCache>,
-	channelCache: &rocket::State<ChannelCache>,
-	keyString: &rocket::State<String>
-) -> Result<String, (Status, String)> {
-	// Pages are 1-based; reject anything past 256 instead of walking an
-	// unbounded number of upstream continuation requests.
-	if page > 256 {
-		return Err((Status::BadRequest, format!("page must be 1-256, got {}", page)));
+async fn apiSearch(q: String, page: u64, cache: &rocket::State<SearchCache>, keyString: &rocket::State<String>) -> Result<String, (Status, String)> {
+	if page > 20 {
+		return Err((Status::BadRequest, format!("page must be 1-20, got {}", page)));
 	}
 
-	let videos = ytSearch(q, page, (**cache).clone(), (**channelCache).clone(), (**keyString).clone()).await?;
+	let videos = ytSearch(q, page, (**cache).clone(), (**keyString).clone()).await?;
 
 	return serde_json::to_string(&videos).map_err(|e| (Status::InternalServerError, e.to_string()));
+}
+
+// v1 of `/search`. The breaking change that bumped the API to v2 was dropping
+// `channelAvatar`, so this wrapper re-adds it to the response: the field now
+// always carries the signed placeholder avatar, because search stopped doing a
+// per-hit channel lookup (see `defaultChannelAvatarUrl`). Everything else,
+// including the page cap, matches v2.
+#[get("/search?<q>&<page>")]
+async fn apiSearchV1(q: String, page: u64, cache: &rocket::State<SearchCache>, keyString: &rocket::State<String>) -> Result<String, (Status, String)> {
+	if page > 20 {
+		return Err((Status::BadRequest, format!("page must be 1-20, got {}", page)));
+	}
+
+	let videos = ytSearch(q, page, (**cache).clone(), (**keyString).clone()).await?;
+	// The token is the same for every hit, so sign it once and clone it in.
+	let channelAvatar = defaultChannelAvatarUrl((**keyString).clone())?;
+	let videosV1: Vec<VideoV1> = videos.into_iter().map(|video| videoToVideoV1(video, channelAvatar.clone())).collect();
+
+	return serde_json::to_string(&videosV1).map_err(|e| (Status::InternalServerError, e.to_string()));
 }
 
 // Prefix for URLs that leave this server (the HLS playlist). A browser resolves
@@ -155,11 +163,8 @@ async fn apiGetM3u8(videoId: &str, keyString: &rocket::State<String>, cache: &ro
 	let videoUrl = format!("{}{}", baseUrl.0, generateCorsUrl(m3u8.video, keyString.to_string(), true)?);
 
 	return Ok(format!(
-		"#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{}\"\n#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={},AUDIO=\"audio\"\n{}",
-		audioUrl,
-		m3u8.videoBandwidth,
-		m3u8.videoRes,
-		videoUrl
+		"#EXTM3U\n#EXT-X-VERSION:4\n#VIDEO_TITLE:{}\n#EXT-X-MEDIA:TYPE=AUDIO,GROUP-ID=\"audio\",NAME=\"Audio\",DEFAULT=YES,AUTOSELECT=YES,URI=\"{}\"\n#EXT-X-STREAM-INF:BANDWIDTH={},RESOLUTION={},AUDIO=\"audio\"\n{}",
+		m3u8.title, audioUrl, m3u8.videoBandwidth, m3u8.videoRes, videoUrl
 	));
 }
 
@@ -199,11 +204,7 @@ impl<'r> Responder<'r, 'static> for CorsProxyResponse {
 	}
 }
 
-fn rewriteUrls(
-	input: &[u8],
-	baseUrl: &str,
-	keyString: &str
-) -> Result<Vec<u8>, (Status, String)> {
+fn rewriteUrls(input: &[u8], baseUrl: &str, keyString: &str) -> Result<Vec<u8>, (Status, String)> {
 	let mut result = Vec::with_capacity(input.len());
 	let mut lastEnd = 0;
 
@@ -214,11 +215,7 @@ fn rewriteUrls(
 			.map_err(|e| (Status::BadRequest, e.to_string()))?
 			.to_string();
 
-		let rewritten = generateCorsUrl(
-			url,
-			keyString.to_string(),
-			false
-		)?;
+		let rewritten = generateCorsUrl(url, keyString.to_string(), false)?;
 
 		result.extend_from_slice(baseUrl.as_bytes());
 		result.extend_from_slice(rewritten.as_bytes());
@@ -380,7 +377,7 @@ async fn corsProxy(token: &str, keyString: &rocket::State<String>, baseUrl: Base
 	if (corsToken.rewriteResponseContent) {
 		body = rewriteUrls(&body, &baseUrl.0, keyString)?;
 	}
-	
+
 	return Ok(CorsProxyResponse {
 		status: upstreamStatus,
 		body,
@@ -437,12 +434,13 @@ fn debugGenerateCorsToken(toSign: String, keyString: &rocket::State<String>) -> 
 #[get("/")]
 fn apiIndex() -> &'static str {
 	"
-/api/v1/m3u8/<video> - Get m3u8 master playlist for a video.
-/api/v1/cors/<token> - CORS proxy, token is a base64 encoded json object see the CORSToken struct. The upstream body, status code and response headers are returned (headers minus hop-by-hop, CORS, cookie, caching-policy and browser-policy ones, see proxySkippedHeaders). Only proxy-level failures use this server's own codes (400 bad token, 401 expired/bad signature, 502 upstream transport error).
-/api/v1/search?q=<search query>&page=(page 1-20) - Get array of videos for a search query.
-/api/v1/channelMetadata?channelId=<channel id> - Get channel metadata for channelId
-/api/v1/debugGetVideoCache - Get the contents of the video cache DEBUG MODE ONLY
-/api/v1/debugGetChannelCache - Get the contents of the channel cache DEBUG MODE ONLY
+/api/v2/m3u8/<video> - Get m3u8 master playlist for a video. Also carries a non-standard #VIDEO_TITLE:<title> comment line (ignored by normal players) so the web player can show the title.
+/api/v2/cors/<token> - CORS proxy, token is a base64 encoded json object see the CORSToken struct. The upstream body, status code and response headers are returned (headers minus hop-by-hop, CORS, cookie, caching-policy and browser-policy ones, see proxySkippedHeaders). Only proxy-level failures use this server's own codes (400 bad token, 401 expired/bad signature, 502 upstream transport error).
+/api/v2/search?q=<search query>&page=(page 1-20) - Get array of videos for a search query.
+/api/v1/search?q=<search query>&page=(page 1-20) - Same as /api/v2/search, but every Video also carries channelAvatar (signed /api/v1/cors/<token> URL of the default avatar, since search no longer looks channels up).
+/api/v2/channelMetadata?channelId=<channel id> - Get channel metadata for channelId
+/api/v2/debugGetVideoCache - Get the contents of the video cache DEBUG MODE ONLY
+/api/v2/debugGetChannelCache - Get the contents of the channel cache DEBUG MODE ONLY
 
 Structs that are given in responses:
 
@@ -451,10 +449,9 @@ struct Video {
 	id: String,
 	thumbnail: String,
 	channel: String,
-	channelAvatar: String,
 	channelName: String,
 	title: String
-}
+} // /api/v1/search additionally returns channelAvatar: String
 #[derive(Serialize, Deserialize, Debug, Clone)]
 struct Channel {
 	id: String,
@@ -488,6 +485,9 @@ impl<'r> rocket::request::FromRequest<'r> for UserAgent {
 #[get("/health")]
 fn health(userAgent: UserAgent) -> Result<&'static str, Status> {
 	if (userAgent.0.contains("opencode")) {
+		// here to prevent opencode from probing this server for ai models,
+		// if i just returned Ok it would then request /v1/models and fill up the log with 404 errors,
+		// but this route could be useful in some deployments.
 		return Err(Status::Forbidden);
 	}
 	return Ok("OK");
@@ -522,6 +522,19 @@ fn rocket() -> _ {
 			"/api/v1",
 			routes![
 				apiIndex,
+				apiSearchV1,
+				apiGetChannelMetadata,
+				corsProxy,
+				apiGetM3u8,
+				debugGetVideoCache,
+				debugGetChannelCache,
+				debugGenerateCorsToken
+			]
+		)
+		.mount(
+			"/api/v2",
+			routes![
+				apiIndex,
 				apiSearch,
 				apiGetChannelMetadata,
 				corsProxy,
@@ -530,5 +543,5 @@ fn rocket() -> _ {
 				debugGetChannelCache,
 				debugGenerateCorsToken
 			]
-		) // increment the v number when making breaking changes in a clone of this line and add wrappers for the old versions to work
-}
+		)
+} // increment the v number when making breaking changes in a clone of this line and add wrappers for the old versions to work

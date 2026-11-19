@@ -12,12 +12,11 @@ type HmacSha256 = Hmac<Sha256>;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Video {
-	id: String,
-	thumbnail: String,
-	channel: String,
-	channelAvatar: String,
-	channelName: String,
-	title: String
+	pub id: String,
+	pub thumbnail: String,
+	pub channel: String,
+	pub channelName: String,
+	pub title: String
 }
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Channel {
@@ -28,9 +27,44 @@ pub struct Channel {
 	banner: Option<String>
 }
 
-// innertube resolves unknown channels to this placeholder avatar, so reuse it
-// instead of emitting an empty string (it is a stable permalink).
+// Shape of a `/api/v1/search` entry. `/api/v2/search` returns `Video`, which no
+// longer carries `channelAvatar`, so v1 keeps its own struct: that is what lets
+// the v1 response stay stable while the v2 shape changes.
+#[derive(Serialize, Debug, Clone)]
+pub struct VideoV1 {
+	pub id: String,
+	pub thumbnail: String,
+	pub channel: String,
+	pub channelAvatar: String,
+	pub channelName: String,
+	pub title: String
+}
+
+// `channelAvatar` used to come from a per-hit `get_channel_about` lookup, which
+// made a cold search page many sequential upstream calls. Search no longer looks
+// channels up (the real avatar is still available via `/channelMetadata`), so v1
+// answers with the placeholder innertube resolves unknown channels to. It is a
+// stable permalink, and it gets a plain CORS URL because it is not rewritten.
 const defaultAvatar: &str = "https://yt3.googleusercontent.com/a/default-user=s100-c-k-c0x00ffffff-no-rj";
+
+// Signed URL for the placeholder avatar. Built once per response and cloned into
+// every hit, since the token is identical for all of them.
+pub fn defaultChannelAvatarUrl(keyString: String) -> Result<String, (Status, String)> {
+	return generateCorsUrl(defaultAvatar.to_string(), keyString, false);
+}
+
+// Widens a v2 `Video` into the v1 shape. `channelAvatar` is passed in so the
+// caller can sign it once for the whole response.
+pub fn videoToVideoV1(video: Video, channelAvatar: String) -> VideoV1 {
+	return VideoV1 {
+		id: video.id,
+		thumbnail: video.thumbnail,
+		channel: video.channel,
+		channelAvatar: channelAvatar,
+		channelName: video.channelName,
+		title: video.title
+	};
+}
 
 pub fn generateCorsUrl(url: String, keyString: String, rewriteContent: bool) -> Result<String, (Status, String)> {
 	let urlCORSToken = CORSToken::new(url, keyString.clone(), rewriteContent)?;
@@ -68,7 +102,9 @@ pub async fn getChannelMetadata(channelId: String, cache: crate::ChannelCache, k
 // Flattens one innertube search hit into the `Video` shape the API/frontend will
 // return. `SearchResultItem` is an enum (video/channel/playlist), so callers match
 // on `SearchResultItem::Video` and pass the inner `SearchVideoItem` in here.
-pub async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: crate::ChannelCache, keyString: String) -> Result<Video, (Status, String)> {
+// Sync now that the per-hit channel lookup is gone; the only fallible step left
+// is signing the thumbnail URL.
+pub fn searchVideoItemToVideo(item: &SearchVideoItem, keyString: String) -> Result<Video, (Status, String)> {
 	// YouTube lists thumbnails smallest-to-largest, but pick the largest explicitly
 	// so the order of `thumbnails` can't silently degrade the image quality.
 	let thumbnail = item
@@ -81,37 +117,16 @@ pub async fn searchVideoItemToVideo(item: &SearchVideoItem, cache: crate::Channe
 	// `channel_id` can be empty for odd result types, so avoid emitting a bare URL.
 	let channel = if item.channel_id.is_empty() { String::new() } else { item.channel_id.clone() };
 
-	// The avatar is cosmetic, so a failed lookup (or a channel without one) falls
-	// back to the placeholder innertube itself returns for unknown channels rather
-	// than failing the whole search page.
-	let channelAvatar = if channel.is_empty() {
-		generateCorsUrl(defaultAvatar.to_string(), keyString.clone(), false)?
-	} else {
-		match getChannelMetadata(channel.clone(), cache, keyString.clone()).await {
-			Ok(metadata) => metadata.avatar.unwrap_or_else(|| defaultAvatar.to_string()),
-			Err((_status, _e)) => {
-				generateCorsUrl(defaultAvatar.to_string(), keyString.clone(), false)?
-			}
-		}
-	};
-
 	return Ok(Video {
 		id: item.video_id.clone(),
 		thumbnail: thumbnailUrl,
 		channel: channel,
-		channelAvatar: channelAvatar,
 		channelName: item.author.clone(),
 		title: item.title.clone()
 	});
 }
 
-pub async fn ytSearch(
-	q: String,
-	page: u64,
-	cache: crate::SearchCache,
-	channelCache: crate::ChannelCache,
-	keyString: String
-) -> Result<Vec<Video>, (Status, String)> {
+pub async fn ytSearch(q: String, page: u64, cache: crate::SearchCache, keyString: String) -> Result<Vec<Video>, (Status, String)> {
 	let yt = innertube().await.map_err(|e| (Status::ServiceUnavailable, e))?;
 
 	// Cache key includes both query and page
@@ -130,7 +145,7 @@ pub async fn ytSearch(
 		let mut videos = Vec::new();
 		for item in items {
 			if let SearchResultItem::Video(video) = item {
-				videos.push(searchVideoItemToVideo(video, channelCache.clone(), keyString.clone()).await?);
+				videos.push(searchVideoItemToVideo(video, keyString.clone())?);
 			}
 		}
 		return Ok(videos);

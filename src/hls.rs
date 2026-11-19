@@ -1,12 +1,12 @@
-use innertube_rs::models::video::GetVideoInfoOptions;
 use crate::innertube;
+use innertube_rs::models::video::GetVideoInfoOptions;
 use rocket::http::Status;
 
 #[derive(Debug)]
 struct AudioRendition {
 	group_id: String,
 	url: String,
-	is_original: bool,
+	is_original: bool
 }
 
 #[derive(Debug)]
@@ -18,13 +18,14 @@ struct Variant {
 	// paired with; the master groups audio per codec/language, so this is the only
 	// reliable way to pick the track YouTube intends for a given video rendition.
 	audio_group: Option<String>,
-	url: String,
+	url: String
 }
 
 // `Clone` lets `apiGetM3u8` hand the parsed renditions to the cache while still
 // using them to build the playlist for the current request.
 #[derive(Debug, Clone)]
 pub struct M3u8 {
+	pub title: String,
 	pub audio: String,
 	pub video: String,
 	pub videoRes: String,
@@ -70,22 +71,17 @@ fn parse_master_playlist(text: &str) -> (Vec<AudioRendition>, Vec<Variant>) {
 				continue;
 			};
 			let group_id = attribute(tags, "GROUP-ID").unwrap_or_default().to_string();
-			let is_original = url.contains("acont%3Doriginal")
-				|| url.contains("acont=original")
-				|| attribute(tags, "NAME").is_some_and(|name| name.ends_with("- original"));
+			let is_original =
+				url.contains("acont%3Doriginal") || url.contains("acont=original") || attribute(tags, "NAME").is_some_and(|name| name.ends_with("- original"));
 
 			audios.push(AudioRendition {
 				group_id,
 				url: url.to_string(),
-				is_original,
+				is_original
 			});
 		} else if let Some(tags) = line.strip_prefix("#EXT-X-STREAM-INF:") {
-			let bandwidth = attribute(tags, "BANDWIDTH")
-				.and_then(|value| value.parse().ok())
-				.unwrap_or(0);
-			let resolution = attribute(tags, "RESOLUTION")
-				.unwrap_or_default()
-				.to_string();
+			let bandwidth = attribute(tags, "BANDWIDTH").and_then(|value| value.parse().ok()).unwrap_or(0);
+			let resolution = attribute(tags, "RESOLUTION").unwrap_or_default().to_string();
 			let codecs = attribute(tags, "CODECS").map(str::to_string);
 			let audio_group = attribute(tags, "AUDIO").map(str::to_string);
 			pending_variant = Some((bandwidth, resolution, codecs, audio_group));
@@ -96,7 +92,7 @@ fn parse_master_playlist(text: &str) -> (Vec<AudioRendition>, Vec<Variant>) {
 					resolution,
 					codecs,
 					audio_group,
-					url: line.to_string(),
+					url: line.to_string()
 				});
 			}
 		}
@@ -130,7 +126,14 @@ pub async fn getM3u8(videoId: String) -> Result<M3u8, (Status, String)> {
 		.get_basic_info(&videoId, Some(&options))
 		.await
 		.map_err(|e| (Status::ServiceUnavailable, e.to_string()))?;
-
+	// `videoDetails` is optional in innertube-rs and only supplies the cosmetic
+	// title for the web player, so fall back to a placeholder instead of failing
+	// the playlist for a response that still has usable `streamingData`.
+	let title = info
+		.player_response
+		.video_details
+		.map(|videoDetails| videoDetails.title)
+		.unwrap_or_else(|| "Unknown".to_string());
 	let hls_url = info
 		.player_response
 		.streaming_data
@@ -160,7 +163,7 @@ pub async fn getM3u8(videoId: String) -> Result<M3u8, (Status, String)> {
 	let video = variants
 		.into_iter()
 		.find(|variant| {
-			variant.resolution.ends_with("x720")
+			variant.resolution.ends_with("x720") // TODO: make it support videos without 720p (example being me at the zoo)
 				&& variant
 					.codecs
 					.as_deref()
@@ -175,19 +178,17 @@ pub async fn getM3u8(videoId: String) -> Result<M3u8, (Status, String)> {
 	let audio = audios
 		.into_iter()
 		.max_by_key(|rendition| {
-			let group_match = video
-				.audio_group
-				.as_deref()
-				.is_some_and(|group| group == rendition.group_id);
+			let group_match = video.audio_group.as_deref().is_some_and(|group| group == rendition.group_id);
 
 			(rendition.is_original, group_match, url_itag(&rendition.url))
 		})
 		.ok_or((Status::BadGateway, "No audio rendition in HLS master playlist".to_string()))?;
 
 	return Ok(M3u8 {
+		title,
 		audio: audio.url,
 		video: video.url,
 		videoRes: video.resolution,
 		videoBandwidth: video.bandwidth.to_string()
-	})
+	});
 }
