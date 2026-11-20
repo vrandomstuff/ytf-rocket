@@ -23,4 +23,12 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 time = { version = "0.3", features = ["local-offset"] }
 ureq = "3"
+
+# innertube-rs always pulls in rquickjs, and rquickjs-sys ships no prebuilt
+# bindings for aarch64-apple-ios (it errors out with "try the `bindgen`
+# feature instead"). Cargo unifies features per target, so declaring it here
+# only turns bindgen on for iOS builds; host builds keep the bundled bindings.
+# It has to be a normal dependency, not a build-dependency: edition 2024 uses
+# the v3 resolver, which does not unify build-dependency features.
+[target.'cfg(target_os = "ios")'.dependencies]
 rquickjs = { version = "0.14.0", features = ["bindgen"] }
