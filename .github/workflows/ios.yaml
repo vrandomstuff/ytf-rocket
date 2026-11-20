@@ -49,6 +49,15 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Build server
+        env:
+          # rustc links `aarch64-apple-ios` as iOS 10.0 by default, but the C
+          # libraries (rquickjs, aws-lc) are compiled against the SDK version.
+          # The 10.0 floor hides `___chkstk_darwin` in libSystem.tbd, so the
+          # link fails. Pinning the deployment target makes rustc pass
+          # `-target arm64-apple-ios18.0.0` and cc pass
+          # `-miphoneos-version-min=18.0`. iOS 18.0 is the floor: the symbol is
+          # hidden for everything below iOS 13.
+          IPHONEOS_DEPLOYMENT_TARGET: "18.0"
         run: cargo build --release --target aarch64-apple-ios
 
       - name: Find server executable
