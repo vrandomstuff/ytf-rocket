@@ -4,7 +4,7 @@
 	"description": "",
 	"main": "index.js",
 	"scripts": {
-		"build": "tsc && cp -r src/**/*.html dist/ && pnpm run vendor",
+		"build": "tsc && cp src/*.html dist/ && pnpm run vendor",
 		"vendor": "cp node_modules/alpinejs/dist/cdn.min.js dist/alpine.min.js && cp node_modules/@tailwindcss/browser/dist/index.global.js dist/tailwind.min.js &&  cp -r src/assets/ node_modules/hls.js/dist/hls.js dist/"
 	},
 	"keywords": [],
